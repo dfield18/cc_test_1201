@@ -156,6 +156,25 @@ export default function Home() {
     }
   }, [messages]);
 
+  // Fetch a cartoon on initial page load
+  useEffect(() => {
+    const fetchCartoon = async () => {
+      try {
+        // Add a timestamp to ensure we get a fresh cartoon each time
+        const response = await fetch(`/api/cartoon?t=${Date.now()}`);
+        const data = await response.json();
+        if (data.imageUrl) {
+          setCurrentCartoon({ imageUrl: data.imageUrl, source: data.source });
+        }
+      } catch (error) {
+        console.error('Error fetching cartoon:', error);
+      }
+    };
+    
+    // Fetch cartoon on initial load
+    fetchCartoon();
+  }, []); // Empty dependency array - only run on mount
+
   // Fetch a new cartoon when loading starts
   useEffect(() => {
     if (isLoading) {
@@ -465,8 +484,11 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-slate-50 overflow-hidden">
-      <div className="container mx-auto px-6 py-12 max-w-7xl">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-slate-100 overflow-hidden relative">
+      {/* Subtle background pattern */}
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(14,165,233,0.03),transparent_50%)] pointer-events-none"></div>
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_20%,rgba(20,184,166,0.02),transparent_50%)] pointer-events-none"></div>
+      <div className="container mx-auto px-6 py-12 max-w-7xl relative z-10">
         {/* Header */}
         <header className="text-center mb-12">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-teal-500 to-cyan-600 shadow-lg shadow-teal-500/20 mb-6">
@@ -486,7 +508,7 @@ export default function Home() {
         <div className="grid grid-cols-5 gap-6 mb-6" style={{ height: '700px', maxHeight: '700px', overflow: 'hidden' }}>
           {/* Left Column - Chatbot */}
           <div className="col-span-2 flex flex-col" style={{ height: '700px', maxHeight: '700px', overflow: 'hidden' }}>
-            <div className="bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-100 p-8 h-full flex flex-col" style={{ maxHeight: '100%', overflow: 'hidden' }}>
+            <div className="bg-white rounded-2xl shadow-2xl shadow-slate-300/40 border border-slate-200/60 p-8 h-full flex flex-col backdrop-blur-sm bg-gradient-to-br from-white to-slate-50/50" style={{ maxHeight: '100%', overflow: 'hidden' }}>
               <div className="mb-6 pb-4 border-b border-slate-200 flex-shrink-0">
                 <h3 className="text-xl font-semibold text-slate-900 mb-1">Your Questions</h3>
                 <p className="text-sm text-slate-500 font-light">Ask me anything about credit cards</p>
@@ -549,11 +571,11 @@ export default function Home() {
 
                       return (
                         <div key={index} className="space-y-3" data-message-index={index}>
-                          <div className="bg-gradient-to-r from-teal-600 to-cyan-600 text-white rounded-xl p-4 shadow-md shadow-teal-500/20">
+                          <div className="bg-gradient-to-r from-teal-600 to-cyan-600 text-white rounded-xl p-4 shadow-lg shadow-teal-500/30">
                             <p className="whitespace-pre-wrap text-sm font-medium leading-relaxed">{message.content}</p>
                           </div>
                           {message.summary && (
-                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 text-sm text-slate-700 shadow-sm">
+                            <div className="bg-gradient-to-br from-slate-50 to-blue-50/20 border border-slate-200/80 rounded-xl p-5 text-sm text-slate-700 shadow-md shadow-slate-100/50">
                               <div className="prose prose-sm max-w-none">
                                 <ReactMarkdown
                                   components={{
@@ -672,7 +694,7 @@ export default function Home() {
 
           {/* Right Column - Credit Card Recommendations */}
           <div className="col-span-3 flex flex-col" style={{ height: '700px', maxHeight: '700px', overflow: 'hidden' }}>
-            <div className="bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-100 p-8 h-full flex flex-col" style={{ maxHeight: '100%', overflow: 'hidden' }}>
+            <div className="bg-white rounded-2xl shadow-2xl shadow-slate-300/40 border border-slate-200/60 p-8 h-full flex flex-col backdrop-blur-sm bg-gradient-to-br from-white to-slate-50/50" style={{ maxHeight: '100%', overflow: 'hidden' }}>
               <div className="flex items-center gap-3 mb-8 flex-shrink-0">
                 <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 flex items-center justify-center shadow-lg shadow-teal-500/20">
                   <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -727,7 +749,26 @@ export default function Home() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                           </svg>
                         </div>
-                        <p className="text-slate-500 font-medium">Card recommendations will appear here after you ask a question.</p>
+                        <p className="text-slate-500 font-medium mb-6">Card recommendations will appear here after you ask a question.</p>
+                        {/* Show cartoon on initial load */}
+                        {currentCartoon && (
+                          <div className="mt-6 flex flex-col items-center">
+                            <div className="w-full max-w-lg rounded-xl overflow-hidden shadow-lg border border-slate-200 bg-slate-50 flex items-center justify-center">
+                              <img
+                                src={currentCartoon.imageUrl}
+                                alt="Cartoon"
+                                className="max-w-full max-h-64 object-contain"
+                                onError={(e) => {
+                                  const target = e.target as HTMLImageElement;
+                                  target.style.display = 'none';
+                                }}
+                              />
+                            </div>
+                            <p className="text-xs text-slate-500 mt-3 text-center font-light">
+                              Cartoon of the moment
+                            </p>
+                          </div>
+                        )}
                       </div>
                     );
                   }
@@ -738,7 +779,7 @@ export default function Home() {
                         {mostRecentAssistantMessage.recommendations.slice(0, 4).map((rec, recIndex) => (
                           <div
                             key={recIndex}
-                            className="bg-white rounded-xl border border-slate-200 shadow-md hover:shadow-lg transition-all duration-300 p-6 flex flex-col group hover:border-teal-300"
+                            className="bg-gradient-to-br from-white via-white to-slate-50/30 rounded-xl border border-slate-200/80 shadow-lg shadow-slate-200/50 hover:shadow-xl hover:shadow-teal-200/30 transition-all duration-300 p-6 flex flex-col group hover:border-teal-300/60 hover:-translate-y-1"
                           >
                             {/* Card Name */}
                             <h3 className="font-semibold text-lg text-slate-900 mb-3 leading-tight">
@@ -799,7 +840,7 @@ export default function Home() {
                                 href={rec.apply_url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="mt-auto w-full text-center px-5 py-3 bg-gradient-to-r from-teal-600 to-cyan-600 text-white text-sm font-semibold rounded-xl hover:from-teal-700 hover:to-cyan-700 transition-all flex items-center justify-center gap-2 shadow-md shadow-teal-500/30 hover:shadow-lg hover:shadow-teal-500/40 group-hover:scale-[1.02]"
+                                className="mt-auto w-full text-center px-5 py-3 bg-gradient-to-r from-teal-600 to-cyan-600 text-white text-sm font-semibold rounded-xl hover:from-teal-700 hover:to-cyan-700 transition-all flex items-center justify-center gap-2 shadow-lg shadow-teal-500/40 hover:shadow-xl hover:shadow-teal-500/50 group-hover:scale-[1.02]"
                               >
                                 Apply Now
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
