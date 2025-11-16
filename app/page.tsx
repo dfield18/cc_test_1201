@@ -235,8 +235,10 @@ export default function Home() {
       // Check if the response contains an error
       if (!response.ok || data.error) {
         const errorMessage = data.error || 'Failed to get recommendations';
-        const errorDetails = data.details ? `\n\nDetails: ${data.details}` : '';
-        throw new Error(`${errorMessage}${errorDetails}`);
+        const errorDetails = data.details ? `\n\n${data.details}` : '';
+        const fullError = `${errorMessage}${errorDetails}`;
+        console.error('API Error:', { error: errorMessage, details: data.details, status: response.status });
+        throw new Error(fullError);
       }
       
       console.log('API Response data:', { 
@@ -309,14 +311,24 @@ export default function Home() {
       }
     } catch (error) {
       console.error('Error:', error);
-      const errorMessage = error instanceof Error 
+      let errorMessage = error instanceof Error 
         ? error.message 
         : 'Sorry, I encountered an error. Please try again.';
+      
+      // Provide more helpful error messages based on error content
+      if (errorMessage.includes('OpenAI API key') || errorMessage.includes('OPENAI_API_KEY')) {
+        errorMessage = `❌ Configuration Error: ${errorMessage}\n\nTo fix this:\n1. Go to your Vercel project settings\n2. Navigate to Environment Variables\n3. Add OPENAI_API_KEY with your OpenAI API key\n4. Redeploy your application\n\nSee VERCEL_DEPLOYMENT.md for detailed instructions.`;
+      } else if (errorMessage.includes('timeout') || errorMessage.includes('timed out')) {
+        errorMessage = `⏱️ ${errorMessage}\n\nThis is normal on the first request. The app is generating embeddings for all credit cards. Please wait 1-2 minutes and try again.`;
+      } else {
+        errorMessage = `❌ Error: ${errorMessage}\n\nTroubleshooting:\n- Check Vercel function logs for details\n- Verify environment variables are set\n- Ensure the Google Sheet is public\n- Check browser console for more information`;
+      }
+      
       setMessages([
         ...newMessages,
         {
           role: 'assistant',
-          content: `❌ Error: ${errorMessage}\n\nPlease check:\n- Your OpenAI API key is set correctly in .env.local\n- The Google Sheet is public and accessible\n- Check the browser console and server logs for more details`,
+          content: errorMessage,
         },
       ]);
     } finally {
@@ -363,8 +375,10 @@ export default function Home() {
       // Check if the response contains an error
       if (!response.ok || data.error) {
         const errorMessage = data.error || 'Failed to get recommendations';
-        const errorDetails = data.details ? `\n\nDetails: ${data.details}` : '';
-        throw new Error(`${errorMessage}${errorDetails}`);
+        const errorDetails = data.details ? `\n\n${data.details}` : '';
+        const fullError = `${errorMessage}${errorDetails}`;
+        console.error('API Error:', { error: errorMessage, details: data.details, status: response.status });
+        throw new Error(fullError);
       }
       
       console.log('API Response data:', { 
@@ -437,14 +451,24 @@ export default function Home() {
       }
     } catch (error) {
       console.error('Error:', error);
-      const errorMessage = error instanceof Error 
+      let errorMessage = error instanceof Error 
         ? error.message 
         : 'Sorry, I encountered an error. Please try again.';
+      
+      // Provide more helpful error messages based on error content
+      if (errorMessage.includes('OpenAI API key') || errorMessage.includes('OPENAI_API_KEY')) {
+        errorMessage = `❌ Configuration Error: ${errorMessage}\n\nTo fix this:\n1. Go to your Vercel project settings\n2. Navigate to Environment Variables\n3. Add OPENAI_API_KEY with your OpenAI API key\n4. Redeploy your application\n\nSee VERCEL_DEPLOYMENT.md for detailed instructions.`;
+      } else if (errorMessage.includes('timeout') || errorMessage.includes('timed out')) {
+        errorMessage = `⏱️ ${errorMessage}\n\nThis is normal on the first request. The app is generating embeddings for all credit cards. Please wait 1-2 minutes and try again.`;
+      } else {
+        errorMessage = `❌ Error: ${errorMessage}\n\nTroubleshooting:\n- Check Vercel function logs for details\n- Verify environment variables are set\n- Ensure the Google Sheet is public\n- Check browser console for more information`;
+      }
+      
       setMessages([
         ...newMessages,
         {
           role: 'assistant',
-          content: `❌ Error: ${errorMessage}\n\nPlease check:\n- Your OpenAI API key is set correctly in .env.local\n- The Google Sheet is public and accessible\n- Check the browser console and server logs for more details`,
+          content: errorMessage,
         },
       ]);
     } finally {
