@@ -241,8 +241,9 @@ export default function Home() {
         throw new Error(fullError);
       }
       
+      const hasValidRecommendations = data.recommendations && Array.isArray(data.recommendations) && data.recommendations.length > 0;
       console.log('API Response data:', { 
-        hasRecommendations: !!data.recommendations, 
+        hasRecommendations: hasValidRecommendations, 
         recommendationsCount: data.recommendations?.length || 0,
         recommendations: data.recommendations,
         summary: data.summary,
@@ -381,8 +382,9 @@ export default function Home() {
         throw new Error(fullError);
       }
       
+      const hasValidRecommendations = data.recommendations && Array.isArray(data.recommendations) && data.recommendations.length > 0;
       console.log('API Response data:', { 
-        hasRecommendations: !!data.recommendations, 
+        hasRecommendations: hasValidRecommendations, 
         recommendationsCount: data.recommendations?.length || 0,
         recommendations: data.recommendations,
         summary: data.summary,
