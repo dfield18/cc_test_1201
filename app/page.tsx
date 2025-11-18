@@ -5,7 +5,7 @@ import { Recommendation } from '@/types';
 import SwipeToLoad from '@/components/SwipeToLoad';
 import CartoonDisplay from '@/components/CartoonDisplay';
 import ReactMarkdown from 'react-markdown';
-import { Plane, ShoppingCart, Shield, User, Sparkles, CreditCard } from 'lucide-react';
+import { Plane, ShoppingCart, Shield, User, Sparkles, CreditCard, Search } from 'lucide-react';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -93,29 +93,68 @@ export default function Home() {
     if (!leftBox) return;
 
     const handleScroll = () => {
-      const isMobile = typeof window !== 'undefined' && window.innerWidth < 1024; // lg breakpoint
-      
-      if (isMobile) {
-        // On mobile: check if user has scrolled away from the top (where most recent question is)
-        // Allow a small threshold (50px) to account for rounding
-        if (leftBox.scrollTop > 50) {
-          // User has scrolled down from top, mark as manually scrolled
-          userHasScrolledLeftRef.current = true;
-        }
-      } else {
-        // On desktop: check if user has scrolled up from the bottom (not at bottom)
-        // Allow a small threshold (50px) to account for rounding
-        const isAtBottom = leftBox.scrollHeight - leftBox.scrollTop - leftBox.clientHeight < 50;
-        if (!isAtBottom) {
-          // User has scrolled up from bottom, mark as manually scrolled
-          userHasScrolledLeftRef.current = true;
-        }
+      // Check if user has scrolled away from the top (where most recent question is)
+      // Allow a small threshold (50px) to account for rounding
+      if (leftBox.scrollTop > 50) {
+        // User has scrolled down from top, mark as manually scrolled
+        userHasScrolledLeftRef.current = true;
       }
     };
 
     leftBox.addEventListener('scroll', handleScroll);
     return () => leftBox.removeEventListener('scroll', handleScroll);
   }, []);
+
+  // Set initial scroll position to top when chat container first loads (desktop only)
+  // Only when there are no messages or a single message
+  useEffect(() => {
+    const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
+    if (!isDesktop) return; // Only run on desktop
+    
+    const userMessages = messages.filter((msg) => msg.role === 'user');
+    const userMessageCount = userMessages.length;
+    
+    // Only set scroll to top if there are no messages or only one message
+    // For multiple messages, the scroll-to-latest logic will handle it
+    if (userMessageCount <= 1) {
+      const setScrollToTop = () => {
+        if (chatContainerRef.current) {
+          chatContainerRef.current.scrollTop = 0;
+        }
+      };
+      
+      // Set scroll to top when container becomes available
+      if (chatContainerRef.current) {
+        // Set immediately
+        setScrollToTop();
+        
+        // Use requestAnimationFrame for reliable timing
+        requestAnimationFrame(() => {
+          setScrollToTop();
+          requestAnimationFrame(() => {
+            setScrollToTop();
+          });
+        });
+        
+        // Also set after delays to ensure it sticks after DOM updates
+        const timeout1 = setTimeout(setScrollToTop, 0);
+        const timeout2 = setTimeout(setScrollToTop, 10);
+        const timeout3 = setTimeout(setScrollToTop, 50);
+        const timeout4 = setTimeout(setScrollToTop, 100);
+        const timeout5 = setTimeout(setScrollToTop, 200);
+        const timeout6 = setTimeout(setScrollToTop, 500);
+        
+        return () => {
+          clearTimeout(timeout1);
+          clearTimeout(timeout2);
+          clearTimeout(timeout3);
+          clearTimeout(timeout4);
+          clearTimeout(timeout5);
+          clearTimeout(timeout6);
+        };
+      }
+    }
+  }, [messages.length, messages]); // Run whenever messages change or container becomes available
 
   // Handle carousel scroll on mobile
   useEffect(() => {
@@ -165,47 +204,68 @@ export default function Home() {
   }, [messages]);
 
   useEffect(() => {
-    // Scroll the left box - on mobile, show most recent question at top; on desktop, show at bottom
+    // Scroll the left box - show most recent question (both mobile and desktop)
     // Only auto-scroll if user hasn't manually scrolled
     if (chatContainerRef.current && !userHasScrolledLeftRef.current) {
       const userMessages = messages.filter((msg) => msg.role === 'user');
       const currentUserMessageCount = userMessages.length;
       const isNewQuestion = currentUserMessageCount > prevUserMessageCountRef.current;
-      const isMobile = typeof window !== 'undefined' && window.innerWidth < 1024; // lg breakpoint
       
       const scrollToLatest = (useSmooth: boolean = true) => {
         if (!chatContainerRef.current) return;
         
         const container = chatContainerRef.current;
+        const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
         
-        if (isMobile && currentUserMessageCount > 0) {
-          // On mobile: scroll to position the most recent question at the top
-          const lastUserMessageIndex = currentUserMessageCount - 1;
-          const messageElements = container.querySelectorAll('[data-message-index]');
-          
-          const lastMessageElement = Array.from(messageElements).find((el) => {
-            const index = parseInt(el.getAttribute('data-message-index') || '-1');
-            return index === lastUserMessageIndex;
-          });
-          
-          if (lastMessageElement) {
-            const containerRect = container.getBoundingClientRect();
-            const elementRect = lastMessageElement.getBoundingClientRect();
-            const elementTopRelativeToContainer = elementRect.top - containerRect.top;
-            const currentScrollTop = container.scrollTop;
-            const targetScrollTop = currentScrollTop + elementTopRelativeToContainer;
+        if (currentUserMessageCount > 0) {
+          if (isDesktop && currentUserMessageCount > 1) {
+            // On desktop with multiple questions, scroll down to show the most recent question
+            const lastUserMessageIndex = currentUserMessageCount - 1;
+            const messageElements = container.querySelectorAll('[data-message-index]');
             
-            container.scrollTo({
-              top: targetScrollTop,
-              behavior: useSmooth ? 'smooth' : 'auto'
+            const lastMessageElement = Array.from(messageElements).find((el) => {
+              const index = parseInt(el.getAttribute('data-message-index') || '-1');
+              return index === lastUserMessageIndex;
             });
+            
+            if (lastMessageElement) {
+              // Scroll to ensure the most recent question is visible
+              // Calculate the position needed to show the most recent question
+              const containerRect = container.getBoundingClientRect();
+              const elementRect = lastMessageElement.getBoundingClientRect();
+              const elementTopRelativeToContainer = elementRect.top - containerRect.top;
+              const currentScrollTop = container.scrollTop;
+              
+              // Always scroll to show the most recent question (position it near the top)
+              const targetScrollTop = currentScrollTop + elementTopRelativeToContainer;
+              container.scrollTo({
+                top: targetScrollTop,
+                behavior: useSmooth ? 'smooth' : 'auto'
+              });
+            }
+          } else {
+            // For mobile or single question, scroll to position the most recent question at the top
+            const lastUserMessageIndex = currentUserMessageCount - 1;
+            const messageElements = container.querySelectorAll('[data-message-index]');
+            
+            const lastMessageElement = Array.from(messageElements).find((el) => {
+              const index = parseInt(el.getAttribute('data-message-index') || '-1');
+              return index === lastUserMessageIndex;
+            });
+            
+            if (lastMessageElement) {
+              const containerRect = container.getBoundingClientRect();
+              const elementRect = lastMessageElement.getBoundingClientRect();
+              const elementTopRelativeToContainer = elementRect.top - containerRect.top;
+              const currentScrollTop = container.scrollTop;
+              const targetScrollTop = currentScrollTop + elementTopRelativeToContainer;
+              
+              container.scrollTo({
+                top: targetScrollTop,
+                behavior: useSmooth ? 'smooth' : 'auto'
+              });
+            }
           }
-        } else {
-          // On desktop: scroll to bottom to show latest messages
-          container.scrollTo({
-            top: container.scrollHeight,
-            behavior: useSmooth ? 'smooth' : 'auto'
-          });
         }
       };
       
@@ -236,6 +296,30 @@ export default function Home() {
       userHasScrolledLeftRef.current = false;
     } else if (currentUserMessageCount === 0) {
       prevUserMessageCountRef.current = 0;
+    }
+  }, [messages]);
+
+  // Hide scrollbar on desktop when there are no user messages
+  useEffect(() => {
+    const container = chatContainerRef.current;
+    if (!container) return;
+    
+    const hasUserMessages = messages.some(msg => msg.role === 'user');
+    const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
+    
+    if (isDesktop) {
+      if (!hasUserMessages) {
+        // Explicitly hide scrollbar when no user messages
+        container.style.overflow = 'hidden';
+        container.style.scrollbarWidth = 'none';
+        // For webkit and IE/Edge browsers
+        container.style.setProperty('-ms-overflow-style', 'none', 'important');
+      } else {
+        // Allow scrolling when user messages exist - let className handle it
+        container.style.overflow = '';
+        container.style.scrollbarWidth = '';
+        container.style.removeProperty('-ms-overflow-style');
+      }
     }
   }, [messages]);
 
@@ -729,9 +813,9 @@ export default function Home() {
             {messages.length === 0 && (
               <p className="text-lg lg:text-2xl text-muted-foreground max-w-2xl mx-auto leading-tight lg:leading-relaxed">
                 <span className="lg:hidden">Get personalized credit card recommendations powered by AI.</span>
-                <span className="hidden lg:inline">
-                  Get personalized credit card recommendations powered by AI.<br />
-                  Find the perfect card for your spending habits and financial goals.
+                <span className="hidden lg:block">
+                  <span className="whitespace-nowrap block">Get personalized credit card recommendations powered by AI.</span>
+                  <span className="whitespace-nowrap block">Find the perfect card for your spending habits and financial goals.</span>
                 </span>
               </p>
             )}
@@ -857,41 +941,30 @@ export default function Home() {
 
         {/* Input Field at Bottom - Only show when no messages */}
         {messages.length === 0 && (
-          <div className="max-w-2xl mx-auto mt-[6.192rem] lg:mt-32 mb-4">
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="flex-1 relative lg:static">
-                <textarea
-                  rows={1}
+          <div className="max-w-3xl mx-auto px-4 mt-[6.192rem] lg:mt-32 mb-4">
+            <div className="flex flex-col space-y-4">
+              <div className="relative">
+                <input
+                  type="text"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyPress={handleKeyPress}
                   placeholder="Ask about credit cards, rewards, travel perks..."
-                  className="w-full min-h-[56px] lg:h-10 pt-2 pb-7 lg:py-6 px-3 pr-16 lg:pr-24 text-base border border-input rounded-md shadow-card bg-card text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 transition-all resize-none"
+                  className="w-full h-auto py-3 md:py-6 px-3 pr-16 md:pr-24 text-base md:text-sm border border-input rounded-md bg-card shadow-card text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 transition-all"
                   disabled={isLoading}
                 />
                 <button
                   onClick={handleSend}
                   disabled={isLoading || !input.trim()}
-                  className="lg:hidden absolute right-2 top-1/2 -translate-y-1/2 min-w-[48px] min-h-[48px] bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-xl hover:from-blue-600 hover:to-cyan-600 disabled:from-slate-400 disabled:to-slate-400 disabled:cursor-not-allowed transition-all flex items-center justify-center shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 min-w-[44px] min-h-[44px] md:min-w-[56px] md:min-h-[56px] md:px-6 md:py-3 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center active:scale-95"
                 >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                  </svg>
+                  <Search className="w-5 h-5" />
                 </button>
               </div>
-              <button
-                onClick={handleSend}
-                disabled={isLoading || !input.trim()}
-                className="hidden lg:flex px-6 h-auto py-3 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-xl hover:from-blue-600 hover:to-cyan-600 disabled:from-slate-400 disabled:to-slate-400 disabled:cursor-not-allowed transition-all text-sm flex items-center justify-center min-w-[56px] shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                </svg>
-              </button>
-            </div>
-            <div className="mt-2 text-center text-xs lg:text-xs text-slate-500 flex flex-col sm:flex-row gap-2 sm:gap-4 justify-center lg:space-x-4">
-              <span>✓ Enter to send</span>
-              <span>✨ Instant AI recommendations</span>
+              <div className="text-center text-sm text-muted-foreground flex flex-col sm:flex-row gap-2 sm:gap-4 justify-center">
+                <span>✓ Enter to send</span>
+                <span>✨ Instant AI recommendations</span>
+              </div>
             </div>
           </div>
         )}
@@ -907,10 +980,47 @@ export default function Home() {
                 <p className="text-sm text-slate-500 font-light">Ask me anything about credit cards</p>
               </div>
               <div 
-                ref={chatContainerRef}
-                className="flex-1 overflow-y-auto mb-4 min-h-0 max-h-full scrollbar-thin px-1"
-                style={{ scrollbarWidth: 'thin' }}
+                ref={(el) => {
+                  if (el) {
+                    // Store ref
+                    (chatContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+                    
+                    // On desktop, set scroll position based on message count
+                    const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
+                    if (isDesktop) {
+                      const userMessages = messages.filter((msg) => msg.role === 'user');
+                      const userMessageCount = userMessages.length;
+                      
+                      // Only set scroll to top if there are no messages or only one message
+                      // For multiple messages, the scroll-to-latest logic will handle it
+                      if (userMessageCount <= 1) {
+                        // Set immediately
+                        el.scrollTop = 0;
+                        
+                        // Use multiple approaches to ensure it sticks
+                        requestAnimationFrame(() => {
+                          if (el) el.scrollTop = 0;
+                          requestAnimationFrame(() => {
+                            if (el) el.scrollTop = 0;
+                          });
+                        });
+                        
+                        setTimeout(() => { if (el) el.scrollTop = 0; }, 0);
+                        setTimeout(() => { if (el) el.scrollTop = 0; }, 10);
+                        setTimeout(() => { if (el) el.scrollTop = 0; }, 50);
+                        setTimeout(() => { if (el) el.scrollTop = 0; }, 100);
+                      }
+                    }
+                  }
+                }}
+                className={`flex-1 mb-4 min-h-0 max-h-full px-1 lg:[direction:rtl] ${
+                  messages.some(msg => msg.role === 'user') 
+                    ? 'overflow-y-auto scrollbar-thin' 
+                    : 'overflow-hidden scrollbar-hide'
+                }`}
+                style={messages.some(msg => msg.role === 'user') ? { scrollbarWidth: 'thin' } : { overflow: 'hidden', scrollbarWidth: 'none' }}
               >
+              <div className="lg:[direction:ltr]">
               {(
                 <>
                   {messages
@@ -1097,6 +1207,7 @@ export default function Home() {
                   )}
                 </>
               )}
+              </div>
               <div ref={messagesEndRef} />
             </div>
             
