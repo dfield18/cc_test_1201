@@ -71,6 +71,7 @@ export default function Home() {
   const [suggestionsCarouselIndex, setSuggestionsCarouselIndex] = useState(0);
   const [suggestionsCarouselScrollProgress, setSuggestionsCarouselScrollProgress] = useState(0);
   const [popularQuestionsCarouselIndex, setPopularQuestionsCarouselIndex] = useState(centerIndex);
+  const [popularQuestionsCarouselScrollProgress, setPopularQuestionsCarouselScrollProgress] = useState(0);
   const [isCarouselHovered, setIsCarouselHovered] = useState(false);
   const [expandedRecommendations, setExpandedRecommendations] = useState<Set<number>>(new Set());
   const [isMobile, setIsMobile] = useState(false);
@@ -92,6 +93,7 @@ export default function Home() {
   // Refs for click-vs-drag detection on carousel buttons
   const carouselButtonMouseDownRef = useRef<{ x: number; y: number; time: number; target: HTMLElement | null } | null>(null);
   const carouselButtonHasDraggedRef = useRef(false);
+  const suggestionsCarouselHasDraggedRef = useRef(false);
   
   // Track when recommendations change to trigger animation
   const prevRecommendationsRef = useRef<Recommendation[]>([]);
@@ -322,21 +324,74 @@ export default function Home() {
     };
   }, [dynamicSuggestions.length]);
 
-  // Handle popular questions carousel scroll (desktop)
+  // Handle popular questions carousel scroll (mobile and desktop)
   useEffect(() => {
     const carousel = popularQuestionsCarouselRef.current;
     if (!carousel) return;
 
-    const handleScroll = () => {
+    let rafId: number | null = null;
+    let isScrolling = false;
+
+    const updateScrollState = () => {
       const scrollLeft = carousel.scrollLeft;
-      const cardWidth = 280; // Fixed card width
+      // Card width is 280px for both mobile and desktop
+      const cardWidth = 280;
       const gap = 12; // gap-3 = 12px
-      const newIndex = Math.round(scrollLeft / (cardWidth + gap));
+      const cardSpacing = cardWidth + gap;
+      const newIndex = Math.round(scrollLeft / cardSpacing);
       setPopularQuestionsCarouselIndex(Math.min(newIndex, SUGGESTED_QUESTIONS.length - 1));
+      
+      // Calculate scroll progress for smooth bar movement (0 to 1)
+      const maxScroll = carousel.scrollWidth - carousel.clientWidth;
+      let progress = 0;
+      
+      if (maxScroll > 0) {
+        progress = scrollLeft / maxScroll;
+        // Ensure progress reaches exactly 1.0 when scrolled all the way to the right
+        // Use a generous threshold (10px) to account for rounding, pixel snapping, touch scrolling, and browser differences
+        if (scrollLeft >= maxScroll - 10) {
+          progress = 1.0;
+        }
+        // Also check if we're at or past the absolute maximum
+        if (scrollLeft >= maxScroll) {
+          progress = 1.0;
+        }
+        // Additional check: if we're very close (within 1% of max), set to 1.0
+        if (maxScroll > 0 && scrollLeft / maxScroll >= 0.99) {
+          progress = 1.0;
+        }
+      } else if (scrollLeft > 0 || carousel.scrollLeft >= carousel.scrollWidth - carousel.clientWidth - 1) {
+        // If maxScroll is 0 or negative but we have scroll, or we're at the end, we're at the end
+        progress = 1.0;
+      }
+      
+      // Clamp and set progress - ensure it can reach 1.0
+      const finalProgress = Math.max(0, Math.min(progress, 1.0));
+      setPopularQuestionsCarouselScrollProgress(finalProgress);
+      
+      isScrolling = false;
+      rafId = null;
     };
 
-    carousel.addEventListener('scroll', handleScroll);
-    return () => carousel.removeEventListener('scroll', handleScroll);
+    const handleScroll = () => {
+      if (!isScrolling) {
+        isScrolling = true;
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId);
+        }
+        rafId = requestAnimationFrame(updateScrollState);
+      }
+    };
+
+    carousel.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('resize', handleScroll, { passive: true });
+    return () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
+      carousel.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('resize', handleScroll);
+    };
   }, []);
 
   // Enable horizontal mouse wheel scrolling, drag-to-scroll, and hide scrollbar for suggestions carousel
@@ -392,44 +447,83 @@ export default function Home() {
     let isDown = false;
     let startX = 0;
     let scrollLeft = 0;
-    let hasMoved = false;
+    let hasDragged = false;
+
+    const handleDragStart = (e: DragEvent) => {
+      // Prevent default drag behavior for images and links
+      if (isDown) {
+        e.preventDefault();
+        return false;
+      }
+    };
 
     const handleMouseDown = (e: MouseEvent) => {
       const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
       if (!isDesktop) return;
       
-      // Don't start drag if clicking on carousel indicators or buttons
+      // Don't start drag if clicking on carousel indicators
       const target = e.target as HTMLElement;
-      if (target.closest('[aria-label*="slide"]') || target.closest('button')) {
+      if (target.closest('[aria-label*="slide"]')) {
         return;
       }
 
+      // Allow dragging even when clicking on suggestion buttons
+      // The button click handler will prevent clicks if we detect a drag
       isDown = true;
-      hasMoved = false;
+      hasDragged = false;
       carousel.style.cursor = 'grabbing';
       carousel.style.userSelect = 'none';
-      startX = e.pageX - carousel.offsetLeft;
+      // Track starting mouse X position and current scroll position
+      startX = e.clientX;
       scrollLeft = carousel.scrollLeft;
+      
+      // Prevent default to avoid text selection and image dragging
+      // Don't stop propagation - let it bubble so buttons can still detect it
+      e.preventDefault();
     };
 
     const handleMouseLeave = () => {
-      isDown = false;
-      hasMoved = false;
-      carousel.style.cursor = 'grab';
-      carousel.style.userSelect = '';
-    };
-
-    const handleMouseUp = () => {
-      isDown = false;
-      hasMoved = false;
-      carousel.style.cursor = 'grab';
-      carousel.style.userSelect = '';
-    };
-
-    const handleDocumentMouseUp = () => {
       if (isDown) {
         isDown = false;
-        hasMoved = false;
+        hasDragged = false;
+        carousel.style.cursor = 'grab';
+        carousel.style.userSelect = '';
+      }
+    };
+
+    const handleMouseUp = (e: MouseEvent) => {
+      if (isDown) {
+        // If we dragged, prevent button click
+        if (hasDragged) {
+          e.preventDefault();
+          e.stopPropagation();
+          suggestionsCarouselHasDraggedRef.current = true;
+        }
+        // Reset drag tracking after a short delay to allow click handler to check
+        setTimeout(() => {
+          suggestionsCarouselHasDraggedRef.current = false;
+        }, 100);
+        isDown = false;
+        hasDragged = false;
+        carousel.style.cursor = 'grab';
+        carousel.style.userSelect = '';
+      }
+    };
+
+    const handleDocumentMouseUp = (e: MouseEvent) => {
+      if (isDown) {
+        // If we dragged, prevent button click
+        if (hasDragged) {
+          e.preventDefault();
+          e.stopPropagation();
+          suggestionsCarouselHasDraggedRef.current = true;
+        }
+        // Reset drag tracking after a short delay to allow click handler to check
+        setTimeout(() => {
+          suggestionsCarouselHasDraggedRef.current = false;
+        }, 100);
+        isDown = false;
+        hasDragged = false;
         carousel.style.cursor = 'grab';
         carousel.style.userSelect = '';
       }
@@ -438,20 +532,38 @@ export default function Home() {
     const handleDocumentMouseMove = (e: MouseEvent) => {
       if (!isDown) return;
       
-      const x = e.pageX - carousel.offsetLeft;
-      const walk = (x - startX) * 1.5; // Scroll speed multiplier
+      // Calculate distance moved
+      const currentX = e.clientX;
+      const deltaX = currentX - startX;
       
-      // Only prevent default and scroll if moved more than 5px (to distinguish from clicks)
-      if (Math.abs(walk) > 5) {
-        hasMoved = true;
-        e.preventDefault();
-        carousel.scrollLeft = scrollLeft - walk;
+      // Always prevent default drag behavior and text selection when dragging
+      e.preventDefault();
+      
+      // Scroll the carousel immediately: moving mouse right scrolls content right, moving mouse left scrolls content left
+      // User wants: drag right reveals right content (scrollLeft increases), drag left reveals left content (scrollLeft decreases)
+      // Formula: scrollLeft = initialScrollLeft + deltaX
+      // This makes: drag right (positive deltaX) increases scrollLeft (shows right content)
+      const newScrollLeft = scrollLeft + deltaX;
+      
+      // Ensure we don't scroll beyond bounds
+      const maxScroll = carousel.scrollWidth - carousel.clientWidth;
+      carousel.scrollLeft = Math.max(0, Math.min(newScrollLeft, maxScroll));
+      
+      // Only consider it a drag if moved more than 3px (for click prevention)
+      if (Math.abs(deltaX) > 3) {
+        hasDragged = true;
+        // Mark that we've dragged, so button clicks won't fire
+        suggestionsCarouselHasDraggedRef.current = true;
       }
     };
 
     updateScrollbar();
     carousel.style.cursor = 'grab';
     carousel.addEventListener('wheel', handleWheel, { passive: false });
+    carousel.addEventListener('dragstart', handleDragStart);
+    // Use capture phase to catch mousedown even on buttons inside
+    // Also add without capture as fallback to ensure it works
+    carousel.addEventListener('mousedown', handleMouseDown, { capture: true });
     carousel.addEventListener('mousedown', handleMouseDown);
     carousel.addEventListener('mouseleave', handleMouseLeave);
     carousel.addEventListener('mouseup', handleMouseUp);
@@ -461,6 +573,8 @@ export default function Home() {
 
     return () => {
       carousel.removeEventListener('wheel', handleWheel);
+      carousel.removeEventListener('dragstart', handleDragStart);
+      carousel.removeEventListener('mousedown', handleMouseDown, { capture: true });
       carousel.removeEventListener('mousedown', handleMouseDown);
       carousel.removeEventListener('mouseleave', handleMouseLeave);
       carousel.removeEventListener('mouseup', handleMouseUp);
@@ -551,23 +665,80 @@ export default function Home() {
     }
 
     const updateScrollbar = () => {
+      const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
+      
       // Check if style element already exists
       let styleElement = document.getElementById('popular-questions-carousel-scrollbar-style');
       
-      // Hide scrollbar on both mobile and desktop
-      carousel.style.scrollbarWidth = 'none';
-      carousel.style.setProperty('-ms-overflow-style', 'none', 'important');
-      
-      // For webkit browsers, hide scrollbar
-      if (!styleElement) {
-        styleElement = document.createElement('style');
-        styleElement.id = 'popular-questions-carousel-scrollbar-style';
-        styleElement.textContent = `
-          #popular-questions-carousel::-webkit-scrollbar {
-            display: none !important;
-          }
-        `;
-        document.head.appendChild(styleElement);
+      if (isDesktop) {
+        // Show thin scrollbar on desktop
+        carousel.style.scrollbarWidth = 'thin';
+        carousel.style.setProperty('-ms-overflow-style', 'auto', 'important');
+        
+        // For webkit browsers, show thin scrollbar
+        if (!styleElement) {
+          styleElement = document.createElement('style');
+          styleElement.id = 'popular-questions-carousel-scrollbar-style';
+          styleElement.textContent = `
+            #popular-questions-carousel::-webkit-scrollbar {
+              display: block !important;
+              height: 8px;
+            }
+            #popular-questions-carousel::-webkit-scrollbar-track {
+              background: rgb(241, 245, 249);
+              border-radius: 4px;
+            }
+            #popular-questions-carousel::-webkit-scrollbar-thumb {
+              background: rgb(203, 213, 225);
+              border-radius: 4px;
+            }
+            #popular-questions-carousel::-webkit-scrollbar-thumb:hover {
+              background: rgb(148, 163, 184);
+            }
+          `;
+          document.head.appendChild(styleElement);
+        } else {
+          // Update existing style
+          styleElement.textContent = `
+            #popular-questions-carousel::-webkit-scrollbar {
+              display: block !important;
+              height: 8px;
+            }
+            #popular-questions-carousel::-webkit-scrollbar-track {
+              background: rgb(241, 245, 249);
+              border-radius: 4px;
+            }
+            #popular-questions-carousel::-webkit-scrollbar-thumb {
+              background: rgb(203, 213, 225);
+              border-radius: 4px;
+            }
+            #popular-questions-carousel::-webkit-scrollbar-thumb:hover {
+              background: rgb(148, 163, 184);
+            }
+          `;
+        }
+      } else {
+        // Hide scrollbar on mobile
+        carousel.style.scrollbarWidth = 'none';
+        carousel.style.setProperty('-ms-overflow-style', 'none', 'important');
+        
+        // For webkit browsers, hide scrollbar
+        if (!styleElement) {
+          styleElement = document.createElement('style');
+          styleElement.id = 'popular-questions-carousel-scrollbar-style';
+          styleElement.textContent = `
+            #popular-questions-carousel::-webkit-scrollbar {
+              display: none !important;
+            }
+          `;
+          document.head.appendChild(styleElement);
+        } else {
+          styleElement.textContent = `
+            #popular-questions-carousel::-webkit-scrollbar {
+              display: none !important;
+            }
+          `;
+        }
       }
     };
 
@@ -618,6 +789,8 @@ export default function Home() {
         return;
       }
 
+      // Allow dragging even when clicking on question buttons
+      // The button handlers will prevent clicks if we detect a drag
       isDown = true;
       hasDragged = false;
       carousel.style.cursor = 'grabbing';
@@ -628,6 +801,12 @@ export default function Home() {
       
       // Prevent default to avoid text selection and image dragging
       e.preventDefault();
+      
+      // Mark that we're starting a potential drag on a button
+      // This will be checked by the button click handler
+      if (target.closest('button') && !target.closest('[aria-label*="slide"]') && !target.closest('[data-indicator-button]')) {
+        carouselButtonHasDraggedRef.current = false;
+      }
     };
 
     const handleMouseLeave = () => {
@@ -683,6 +862,8 @@ export default function Home() {
       // Only consider it a drag if moved more than 3px
       if (Math.abs(deltaX) > 3) {
         hasDragged = true;
+        // Mark that we've dragged, so button clicks won't fire
+        carouselButtonHasDraggedRef.current = true;
       }
       
       // Prevent default drag behavior and text selection
@@ -703,7 +884,8 @@ export default function Home() {
     carousel.style.cursor = 'grab';
     carousel.addEventListener('wheel', handleWheel, { passive: false });
     carousel.addEventListener('dragstart', handleDragStart);
-    carousel.addEventListener('mousedown', handleMouseDown);
+    // Use capture phase to catch mousedown even on buttons inside
+    carousel.addEventListener('mousedown', handleMouseDown, { capture: true });
     carousel.addEventListener('mouseleave', handleMouseLeave);
     carousel.addEventListener('mouseup', handleMouseUp);
     document.addEventListener('mouseup', handleDocumentMouseUp);
@@ -713,7 +895,7 @@ export default function Home() {
     return () => {
       carousel.removeEventListener('wheel', handleWheel);
       carousel.removeEventListener('dragstart', handleDragStart);
-      carousel.removeEventListener('mousedown', handleMouseDown);
+      carousel.removeEventListener('mousedown', handleMouseDown, { capture: true });
       carousel.removeEventListener('mouseleave', handleMouseLeave);
       carousel.removeEventListener('mouseup', handleMouseUp);
       document.removeEventListener('mouseup', handleDocumentMouseUp);
@@ -1295,6 +1477,7 @@ export default function Home() {
 
   // Handle click-vs-drag detection for carousel buttons
   const handleCarouselButtonMouseDown = (e: React.MouseEvent<HTMLButtonElement>) => {
+    // Don't prevent default or stop propagation - allow drag-to-scroll to work
     carouselButtonMouseDownRef.current = {
       x: e.clientX,
       y: e.clientY,
@@ -1538,8 +1721,16 @@ export default function Home() {
 
   return (
     <div className="relative overflow-hidden min-h-screen bg-background">
+      {/* Custom grid styles for desktop */}
+      <style dangerouslySetInnerHTML={{__html: `
+        @media (min-width: 1024px) {
+          .desktop-grid-cols {
+            grid-template-columns: 45% 55% !important;
+          }
+        }
+      `}} />
       {/* Animated gradient overlay */}
-      <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-background to-accent/5 animate-gradient-xy bg-[length:400%_400%]"></div>
+      <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-background to-accent/5 animate-gradient-xy bg-[length:400%_400%] pointer-events-none"></div>
       
       {/* Floating gradient orbs */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
@@ -1618,141 +1809,106 @@ export default function Home() {
               </div>
               <h3 className="text-xl lg:text-2xl md:text-3xl font-bold text-foreground">Popular Questions</h3>
             </div>
-            {/* Mobile Carousel */}
-            <div className="lg:hidden">
-              <div 
-                ref={carouselRef}
-                className="flex overflow-x-auto snap-x snap-mandatory scrollbar-hide gap-3 px-4 -mx-4"
-              >
-                {SUGGESTED_QUESTIONS.map((question, index) => (
-                  <button
-                    key={index}
-                    onClick={() => handleSuggestedQuestion(question.text)}
-                    disabled={isLoading}
-                    className="bg-white rounded-xl p-2.5 border border-slate-200 hover:border-blue-300 hover:shadow-md hover:scale-105 transition-all duration-200 h-[240px] w-[280px] flex-shrink-0 snap-center flex flex-col disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <div className="flex flex-col items-center text-center space-y-4 flex-1 justify-center">
-                      <div className="rounded-full bg-primary/10 p-4 min-w-[56px] min-h-[56px] flex items-center justify-center">
-                        {renderSuggestedIcon(question.icon, 'w-7 h-7', true)}
-                      </div>
-                      <h3 className="font-semibold text-base text-card-foreground leading-tight">
-                        {question.mobileText || question.text}
-                      </h3>
-                      <p className="text-base md:text-sm text-muted-foreground leading-relaxed">
-                        {question.description}
-                      </p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-              {/* Carousel Indicators */}
-              <div className="flex justify-center gap-2 mt-4">
-                {SUGGESTED_QUESTIONS.map((_, index) => (
-                  <button
-                    key={index}
-                    onClick={() => {
-                      if (carouselRef.current) {
-                        const cardWidth = 280; // Fixed card width
-                        const gap = 12; // gap-3 = 12px
-                        carouselRef.current.scrollTo({
-                          left: index * (cardWidth + gap),
-                          behavior: 'smooth'
-                        });
-                      }
-                    }}
-                    className={`w-2 h-2 rounded-full transition-all duration-200 ${
-                      index === carouselIndex ? 'bg-primary w-6' : 'bg-slate-300'
-                    }`}
-                    aria-label={`Go to slide ${index + 1}`}
-                  />
-                ))}
-              </div>
-            </div>
-            {/* Desktop Carousel */}
+            {/* Carousel for Popular Questions */}
             <div 
-              className="hidden lg:block relative"
-              onMouseEnter={() => setIsCarouselHovered(true)}
-              onMouseLeave={() => setIsCarouselHovered(false)}
+              ref={popularQuestionsCarouselRef}
+              className="flex overflow-x-auto snap-x snap-mandatory scrollbar-hide gap-3 px-4 -mx-4 bg-slate-50/50 rounded-lg py-3 cursor-grab active:cursor-grabbing"
+              style={{
+                WebkitOverflowScrolling: 'touch',
+                scrollBehavior: 'smooth',
+                overscrollBehaviorX: 'contain',
+                scrollSnapType: 'x mandatory',
+                scrollPadding: '0 1rem',
+                scrollbarWidth: 'none',
+                msOverflowStyle: 'none',
+                WebkitScrollSnapType: 'x mandatory',
+                scrollSnapStop: 'normal',
+                willChange: 'scroll-position',
+                touchAction: 'pan-x'
+              }}
             >
-              {/* Left Arrow Button */}
-              <button
-                onClick={navigateCarouselLeft}
-                className={`absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-white/90 backdrop-blur-sm rounded-full p-2 shadow-lg border border-slate-200 hover:bg-white hover:shadow-xl transition-all duration-200 ${
-                  isCarouselHovered ? 'opacity-100 translate-x-2' : 'opacity-0 -translate-x-2 pointer-events-none'
-                }`}
-                aria-label="Previous slide"
-              >
-                <ChevronLeft className="w-6 h-6 text-slate-700" />
-              </button>
-
-              {/* Right Arrow Button */}
-              <button
-                onClick={navigateCarouselRight}
-                className={`absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-white/90 backdrop-blur-sm rounded-full p-2 shadow-lg border border-slate-200 hover:bg-white hover:shadow-xl transition-all duration-200 ${
-                  isCarouselHovered ? 'opacity-100 -translate-x-2' : 'opacity-0 translate-x-2 pointer-events-none'
-                }`}
-                aria-label="Next slide"
-              >
-                <ChevronRight className="w-6 h-6 text-slate-700" />
-              </button>
-
-              <div 
-                ref={popularQuestionsCarouselRef}
-                className="flex overflow-x-auto snap-x snap-mandatory scrollbar-hide gap-3 px-4 -mx-4"
-                style={{
-                  WebkitOverflowScrolling: 'touch',
-                  scrollBehavior: 'smooth',
-                  overscrollBehaviorX: 'contain'
-                }}
-              >
-                {SUGGESTED_QUESTIONS.map((question, index) => (
-                  <button
-                    key={index}
-                    onMouseDown={handleCarouselButtonMouseDown}
-                    onMouseUp={handleCarouselButtonMouseUp}
-                    onClick={(e) => handleCarouselButtonClick(e, question.text)}
-                    disabled={isLoading}
-                    className="bg-white rounded-xl p-2.5 border border-slate-200 hover:border-blue-300 hover:shadow-md hover:scale-105 transition-all duration-200 h-[240px] w-[280px] flex-shrink-0 snap-center flex flex-col disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <div className="flex flex-col items-center text-center space-y-4 flex-1 justify-center">
-                      <div className="rounded-full bg-primary/10 p-4 min-w-[56px] min-h-[56px] flex items-center justify-center">
-                        {renderSuggestedIcon(question.icon, 'w-7 h-7', true)}
-                      </div>
-                      <h3 className="font-semibold text-base text-card-foreground leading-tight">
-                        {question.text}
-                      </h3>
-                      <p className="text-base md:text-sm text-muted-foreground leading-relaxed">
-                        {question.description}
-                      </p>
+              {SUGGESTED_QUESTIONS.map((question, index) => (
+                <button
+                  key={index}
+                  onClick={(e) => {
+                    // Prevent click if we detected a drag
+                    if (carouselButtonHasDraggedRef.current) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      return;
+                    }
+                    handleSuggestedQuestion(question.text);
+                  }}
+                  disabled={isLoading}
+                  className="bg-white rounded-xl p-2.5 sm:p-3 border border-slate-200 hover:border-blue-300 hover:shadow-md hover:scale-105 transition-all duration-200 h-[240px] sm:h-[240px] w-[280px] sm:w-[280px] flex-shrink-0 snap-center flex flex-col disabled:opacity-50 disabled:cursor-not-allowed group focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2"
+                >
+                  <div className="flex flex-col items-center text-center space-y-4 flex-1 justify-center">
+                    <div className="rounded-full bg-primary/10 p-4 min-w-[56px] min-h-[56px] flex items-center justify-center">
+                      {renderSuggestedIcon(question.icon, 'w-7 h-7', true)}
                     </div>
-                  </button>
-                ))}
-              </div>
-              {/* Carousel Indicators */}
-              <div className="flex justify-center gap-2 mt-4">
-                {SUGGESTED_QUESTIONS.map((_, index) => (
-                  <button
-                    key={index}
-                    data-indicator-button
-                    onClick={() => {
-                      if (!hasDraggedIndicatorRef.current && popularQuestionsCarouselRef.current) {
-                        const cardWidth = 280; // Fixed card width
-                        const gap = 12; // gap-3 = 12px
-                        popularQuestionsCarouselRef.current.scrollTo({
-                          left: index * (cardWidth + gap),
-                          behavior: 'smooth'
-                        });
-                      }
-                    }}
-                    className={`w-2 h-2 rounded-full transition-all duration-200 cursor-grab active:cursor-grabbing select-none ${
-                      index === popularQuestionsCarouselIndex ? 'bg-primary w-6' : 'bg-slate-300'
-                    }`}
-                    style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
-                    aria-label={`Go to slide ${index + 1}`}
-                  />
-                ))}
-              </div>
+                    <h3 className="font-semibold text-base text-card-foreground leading-tight px-2">
+                      {question.mobileText || question.text}
+                    </h3>
+                    <p className="text-base md:text-sm text-muted-foreground leading-relaxed px-2">
+                      {question.description}
+                    </p>
+                  </div>
+                </button>
+              ))}
             </div>
+            {/* Carousel Indicators */}
+            {SUGGESTED_QUESTIONS.length > 0 && (() => {
+              const totalDots = SUGGESTED_QUESTIONS.length;
+              const dotWidth = 0.5; // w-2 = 0.5rem (inactive), w-6 = 1.5rem (active)
+              const gap = 0.5; // gap-2 = 0.5rem
+              const barWidth = 1.5; // width of sliding bar
+              
+              // Calculate positions based on actual dot layout
+              const dotSpacing = dotWidth + gap; // 1rem between dot left edges
+              const leftmostPosition = 0;
+              const rightmostDotLeftEdge = (totalDots - 1) * dotSpacing;
+              const rightmostDotRightEdge = rightmostDotLeftEdge + 1.5; // 4.5rem (active)
+              const rightmostPosition = rightmostDotRightEdge - barWidth;
+              
+              // Map scroll progress (0-1) to bar position
+              const scaledProgress = Math.min(popularQuestionsCarouselScrollProgress / 0.75, 1.0);
+              const barPosition = scaledProgress * rightmostPosition;
+              
+              return (
+                <div className="flex justify-center gap-2 mt-4 relative" style={{ width: 'fit-content', margin: '1rem auto 0' }}>
+                  {/* Sliding indicator bar */}
+                  <div 
+                    className="absolute h-2 bg-primary rounded-full transition-all duration-75 ease-out"
+                    style={{
+                      width: '1.5rem',
+                      left: `${barPosition}rem`,
+                      top: '0',
+                      transform: 'translateY(0)'
+                    }}
+                  />
+                  {SUGGESTED_QUESTIONS.map((_, index) => (
+                    <button
+                      key={index}
+                      onClick={() => {
+                        if (popularQuestionsCarouselRef.current) {
+                          // Card width is 280px
+                          const cardWidth = 280;
+                          const gap = 12; // gap-3 = 12px
+                          popularQuestionsCarouselRef.current.scrollTo({
+                            left: index * (cardWidth + gap),
+                            behavior: 'smooth'
+                          });
+                        }
+                      }}
+                      className={`w-2 h-2 rounded-full transition-all duration-200 relative z-10 ${
+                        index === popularQuestionsCarouselIndex ? 'bg-primary w-6' : 'bg-slate-300'
+                      }`}
+                      aria-label={`Go to slide ${index + 1}`}
+                    />
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -1787,10 +1943,13 @@ export default function Home() {
 
         {/* Two Column Layout - Only show when there are messages */}
         {messages.length > 0 && (
-        <div ref={chatbotContainerRef} className={`grid gap-6 mb-6 mt-12 ${messages.some(msg => msg.role === 'user') ? 'grid-cols-1 lg:grid-cols-5' : 'grid-cols-1 max-w-xl mx-auto'} ${messages.some(msg => msg.role === 'user') ? 'lg:h-[700px]' : 'h-[500px]'} overflow-visible lg:overflow-hidden`}>
+        <div 
+          ref={chatbotContainerRef} 
+          className={`grid gap-6 mb-6 mt-12 ${messages.some(msg => msg.role === 'user') ? 'grid-cols-1 desktop-grid-cols' : 'grid-cols-1 max-w-xl mx-auto'} ${messages.some(msg => msg.role === 'user') ? 'lg:h-[700px]' : 'h-[500px]'} overflow-visible lg:overflow-hidden`}
+        >
           {/* Left Column - Chatbot */}
-          <div className={`${messages.some(msg => msg.role === 'user') ? 'lg:col-span-2' : 'col-span-1'} flex flex-col ${messages.some(msg => msg.role === 'user') ? 'min-h-[600px] lg:h-[700px]' : 'h-[500px]'} overflow-visible lg:overflow-hidden`}>
-            <div className={`lg:bg-white bg-transparent rounded-2xl lg:shadow-2xl lg:shadow-slate-300/40 border lg:border-slate-200/60 border-slate-200/30 lg:h-full flex flex-col backdrop-blur-sm lg:bg-gradient-to-br lg:from-white lg:to-slate-50/50 ${messages.some(msg => msg.role === 'user') ? 'p-4 lg:p-8' : 'p-4 md:p-6'}`} style={{ maxHeight: '100%' }}>
+          <div className={`${messages.some(msg => msg.role === 'user') ? 'lg:col-span-1' : 'col-span-1'} flex flex-col ${messages.some(msg => msg.role === 'user') ? 'min-h-[600px] lg:h-[700px]' : 'h-[500px]'} overflow-visible lg:overflow-hidden`}>
+            <div className={`lg:bg-transparent bg-transparent rounded-2xl lg:shadow-none border lg:border-transparent border-slate-200/30 lg:h-full flex flex-col backdrop-blur-sm ${messages.some(msg => msg.role === 'user') ? 'p-4 lg:p-8' : 'p-4 md:p-6'}`} style={{ maxHeight: '100%' }}>
               <div className={`${messages.some(msg => msg.role === 'user') ? 'mb-6 pb-4' : 'mb-4 pb-3'} border-b border-slate-200/60 flex-shrink-0 hidden lg:block`}>
                 <h3 className={`${messages.some(msg => msg.role === 'user') ? 'text-xl' : 'text-lg'} font-semibold text-slate-900 mb-1`}>Your Questions</h3>
                 <p className="text-base text-muted-foreground">Ask me anything about credit cards</p>
@@ -2102,67 +2261,26 @@ export default function Home() {
                   {dynamicSuggestions.length > 0 && messages.length > 0 && !isLoading && (
                     <div className="hidden lg:block mt-6 pt-6 border-t border-slate-200 max-w-sm lg:max-w-none">
                       <p className="text-xs md:text-sm text-slate-500 mb-4 font-semibold uppercase tracking-wide">You might also ask:</p>
-                      {/* Carousel for both mobile and desktop */}
-                      <div 
-                        ref={suggestionsCarouselRef}
-                        className="flex overflow-x-auto snap-x snap-mandatory scrollbar-hide gap-3 px-4 -mx-4 bg-slate-50/50 rounded-lg py-3 lg:bg-transparent lg:py-0"
-                        style={{
-                          WebkitOverflowScrolling: 'touch',
-                          scrollBehavior: 'smooth',
-                          overscrollBehaviorX: 'contain',
-                          scrollSnapType: 'x mandatory',
-                          scrollPadding: '0 1rem',
-                          scrollbarWidth: 'none',
-                          msOverflowStyle: 'none',
-                          WebkitScrollSnapType: 'x mandatory',
-                          scrollSnapStop: 'normal',
-                          willChange: 'scroll-position'
-                        }}
-                      >
-                        {dynamicSuggestions.slice(0, 4).map((suggestion, index) => (
+                      {/* Fixed three boxes grid for desktop */}
+                      <div className="grid grid-cols-3 gap-3">
+                        {dynamicSuggestions.slice(0, 3).map((suggestion, index) => (
                           <button
                             key={index}
                             onClick={() => handleSuggestedQuestion(suggestion)}
                             disabled={isLoading}
-                            className="bg-white rounded-xl p-2 border border-slate-200 hover:border-teal-300 hover:shadow-md hover:scale-105 transition-all duration-200 h-[160px] w-[200px] lg:h-[240px] lg:w-[280px] flex-shrink-0 snap-center flex flex-col disabled:opacity-50 disabled:cursor-not-allowed group focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2"
+                            className="bg-white rounded-xl p-2 border border-slate-200 hover:border-teal-300 hover:shadow-md hover:scale-105 transition-all duration-200 h-[160px] flex flex-col disabled:opacity-50 disabled:cursor-not-allowed group focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2"
                           >
                             <div className="flex flex-col items-center text-center space-y-2 flex-1 justify-center">
-                              <div className="rounded-full bg-primary/10 p-2 min-w-[40px] min-h-[40px] lg:p-4 lg:min-w-[56px] lg:min-h-[56px] flex items-center justify-center">
-                                <span className="text-lg lg:text-2xl group-hover:scale-110 transition-transform">{getSuggestionIcon(suggestion)}</span>
+                              <div className="rounded-full bg-primary/10 p-2 min-w-[40px] min-h-[40px] flex items-center justify-center">
+                                <span className="text-lg group-hover:scale-110 transition-transform">{getSuggestionIcon(suggestion)}</span>
                               </div>
-                              <h3 className="font-semibold text-xs lg:text-base text-card-foreground leading-tight px-2">
+                              <h3 className="font-semibold text-xs text-card-foreground leading-tight px-2">
                                 {suggestion}
                               </h3>
                             </div>
                           </button>
                         ))}
                       </div>
-                      {/* Carousel Indicators */}
-                      {dynamicSuggestions.length > 0 && (
-                        <div className="flex justify-center gap-2 mt-4">
-                          {dynamicSuggestions.slice(0, 4).map((_, index) => (
-                            <button
-                              key={index}
-                              onClick={() => {
-                                if (suggestionsCarouselRef.current) {
-                                  // Mobile card width is 200px, desktop is 280px
-                                  const isMobile = typeof window !== 'undefined' && window.innerWidth < 1024;
-                                  const cardWidth = isMobile ? 200 : 280;
-                                  const gap = 12; // gap-3 = 12px
-                                  suggestionsCarouselRef.current.scrollTo({
-                                    left: index * (cardWidth + gap),
-                                    behavior: 'smooth'
-                                  });
-                                }
-                              }}
-                              className={`w-2 h-2 rounded-full transition-all duration-200 ${
-                                index === suggestionsCarouselIndex ? 'bg-primary w-6' : 'bg-slate-300'
-                              }`}
-                              aria-label={`Go to slide ${index + 1}`}
-                            />
-                          ))}
-                        </div>
-                      )}
                     </div>
                   )}
                 </>
@@ -2417,8 +2535,8 @@ export default function Home() {
 
           {/* Right Column - Credit Card Recommendations - Only show after a question is asked */}
           {messages.some(msg => msg.role === 'user') && (
-          <div className="hidden lg:flex lg:col-span-3 flex-col h-[500px] lg:h-[700px]" style={{ overflow: 'hidden' }}>
-            <div className="bg-white rounded-2xl shadow-2xl shadow-slate-300/40 border border-slate-200/60 p-4 lg:p-8 h-full flex flex-col backdrop-blur-sm bg-gradient-to-br from-white to-slate-50/50" style={{ maxHeight: '100%', overflow: 'hidden' }}>
+          <div className="hidden lg:flex lg:col-span-1 flex-col h-[500px] lg:h-[700px]" style={{ overflow: 'hidden' }}>
+            <div className="lg:bg-transparent bg-white rounded-2xl lg:shadow-none lg:border-transparent shadow-2xl shadow-slate-300/40 border border-slate-200/60 p-4 lg:p-8 h-full flex flex-col backdrop-blur-sm" style={{ maxHeight: '100%', overflow: 'hidden' }}>
               <div className="hidden lg:flex items-center gap-3 mb-6 lg:mb-8 flex-shrink-0">
                 <div className="w-10 h-10 lg:w-12 lg:h-12 rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 flex items-center justify-center shadow-lg shadow-teal-500/20">
                   <svg className="w-5 h-5 lg:w-6 lg:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
