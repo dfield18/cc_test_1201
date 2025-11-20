@@ -870,12 +870,12 @@ export default function Home() {
       const userMessages = messages.filter((msg) => msg.role === 'user');
       const currentUserMessageCount = userMessages.length;
       const isNewQuestion = currentUserMessageCount > prevUserMessageCountRef.current;
+      const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
       
       const scrollToLatest = (useSmooth: boolean = true) => {
         if (!chatContainerRef.current) return;
         
         const container = chatContainerRef.current;
-        const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
         
         if (currentUserMessageCount > 0) {
           if (isDesktop && currentUserMessageCount > 1) {
@@ -914,16 +914,29 @@ export default function Home() {
             });
             
             if (lastMessageElement) {
-              const containerRect = container.getBoundingClientRect();
-              const elementRect = lastMessageElement.getBoundingClientRect();
-              const elementTopRelativeToContainer = elementRect.top - containerRect.top;
-              const currentScrollTop = container.scrollTop;
-              const targetScrollTop = currentScrollTop + elementTopRelativeToContainer;
-              
-              container.scrollTo({
-                top: targetScrollTop,
-                behavior: useSmooth ? 'smooth' : 'auto'
-              });
+              if (isDesktop) {
+                // Desktop: scroll within container
+                const containerRect = container.getBoundingClientRect();
+                const elementRect = lastMessageElement.getBoundingClientRect();
+                const elementTopRelativeToContainer = elementRect.top - containerRect.top;
+                const currentScrollTop = container.scrollTop;
+                const targetScrollTop = currentScrollTop + elementTopRelativeToContainer;
+                
+                container.scrollTo({
+                  top: targetScrollTop,
+                  behavior: useSmooth ? 'smooth' : 'auto'
+                });
+              } else {
+                // Mobile: scroll the window to position the most recent question at the top of the screen
+                const elementRect = lastMessageElement.getBoundingClientRect();
+                const elementTop = elementRect.top + window.scrollY;
+                const offset = 20; // Small offset from top
+                
+                window.scrollTo({
+                  top: elementTop - offset,
+                  behavior: useSmooth ? 'smooth' : 'auto'
+                });
+              }
             }
           }
         }
@@ -1575,32 +1588,6 @@ export default function Home() {
           </header>
         )}
 
-        {/* Fixed Mobile Input Box at Top - Only show on mobile when chatbot is not visible */}
-        {messages.some(msg => msg.role === 'user') && !isChatbotVisible && (
-          <div className="lg:hidden fixed top-0 left-0 right-0 z-50 bg-white/95 backdrop-blur-sm border-b border-slate-200 shadow-md px-4 py-3">
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="flex-1 relative">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  placeholder="Ask about credit cards..."
-                  className="w-full min-h-[56px] h-10 py-7 px-3 pr-16 text-base border border-input rounded-md shadow-card bg-card text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 transition-all duration-200"
-                />
-                <button
-                  onClick={handleSend}
-                  disabled={isLoading || !input.trim()}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 min-w-[48px] min-h-[48px] bg-gradient-to-r from-teal-600 to-cyan-600 text-white rounded-xl hover:from-teal-700 hover:to-cyan-700 disabled:from-slate-400 disabled:to-slate-400 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center shadow-lg shadow-teal-500/30 hover:shadow-xl hover:shadow-teal-500/40 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
 
         {/* Popular Questions Section - Only show when no messages */}
@@ -1781,10 +1768,10 @@ export default function Home() {
 
         {/* Two Column Layout - Only show when there are messages */}
         {messages.length > 0 && (
-        <div ref={chatbotContainerRef} className={`grid gap-6 mb-6 mt-12 ${messages.some(msg => msg.role === 'user') ? 'grid-cols-1 lg:grid-cols-5' : 'grid-cols-1 max-w-xl mx-auto'} ${messages.some(msg => msg.role === 'user') ? 'lg:h-[700px]' : 'h-[500px]'}`} style={{ overflow: 'hidden' }}>
+        <div ref={chatbotContainerRef} className={`grid gap-6 mb-6 mt-12 ${messages.some(msg => msg.role === 'user') ? 'grid-cols-1 lg:grid-cols-5' : 'grid-cols-1 max-w-xl mx-auto'} ${messages.some(msg => msg.role === 'user') ? 'lg:h-[700px]' : 'h-[500px]'} overflow-visible lg:overflow-hidden`}>
           {/* Left Column - Chatbot */}
-          <div className={`${messages.some(msg => msg.role === 'user') ? 'lg:col-span-2' : 'col-span-1'} flex flex-col ${messages.some(msg => msg.role === 'user') ? 'h-[600px] lg:h-[700px]' : 'h-[500px]'}`} style={{ overflow: 'hidden' }}>
-            <div className={`lg:bg-white bg-transparent rounded-2xl lg:shadow-2xl lg:shadow-slate-300/40 border lg:border-slate-200/60 border-slate-200/30 h-full flex flex-col backdrop-blur-sm lg:bg-gradient-to-br lg:from-white lg:to-slate-50/50 ${messages.some(msg => msg.role === 'user') ? 'p-4 lg:p-8' : 'p-4 md:p-6'}`} style={{ maxHeight: '100%', overflow: 'hidden', overflowX: 'hidden' }}>
+          <div className={`${messages.some(msg => msg.role === 'user') ? 'lg:col-span-2' : 'col-span-1'} flex flex-col ${messages.some(msg => msg.role === 'user') ? 'min-h-[600px] lg:h-[700px]' : 'h-[500px]'} overflow-visible lg:overflow-hidden`}>
+            <div className={`lg:bg-white bg-transparent rounded-2xl lg:shadow-2xl lg:shadow-slate-300/40 border lg:border-slate-200/60 border-slate-200/30 lg:h-full flex flex-col backdrop-blur-sm lg:bg-gradient-to-br lg:from-white lg:to-slate-50/50 ${messages.some(msg => msg.role === 'user') ? 'p-4 lg:p-8' : 'p-4 md:p-6'}`} style={{ maxHeight: '100%' }}>
               <div className={`${messages.some(msg => msg.role === 'user') ? 'mb-6 pb-4' : 'mb-4 pb-3'} border-b border-slate-200/60 flex-shrink-0 hidden lg:block`}>
                 <h3 className={`${messages.some(msg => msg.role === 'user') ? 'text-xl' : 'text-lg'} font-semibold text-slate-900 mb-1`}>Your Questions</h3>
                 <p className="text-base text-muted-foreground">Ask me anything about credit cards</p>
@@ -1823,12 +1810,15 @@ export default function Home() {
                     }
                   }
                 }}
-                className={`flex-1 mb-4 min-h-0 max-h-full px-1 lg:[direction:rtl] ${
+                className={`flex-1 mb-4 min-h-0 lg:max-h-full px-1 lg:[direction:rtl] ${
                   messages.some(msg => msg.role === 'user') 
-                    ? 'overflow-y-auto overflow-x-hidden scrollbar-thin' 
-                    : 'overflow-hidden scrollbar-hide'
+                    ? 'lg:overflow-y-auto overflow-x-hidden lg:scrollbar-thin overflow-visible' 
+                    : 'lg:overflow-hidden overflow-visible scrollbar-hide'
                 }`}
-                style={messages.some(msg => msg.role === 'user') ? { scrollbarWidth: 'thin', overflowX: 'hidden', touchAction: 'pan-y' } : { overflow: 'hidden', scrollbarWidth: 'none' }}
+                style={messages.some(msg => msg.role === 'user') 
+                  ? (isMobile ? { overflowX: 'hidden' } : { scrollbarWidth: 'thin', overflowX: 'hidden', touchAction: 'pan-y' })
+                  : (isMobile ? {} : { overflow: 'hidden', scrollbarWidth: 'none' })
+                }
               >
               <div className="lg:[direction:ltr] overflow-x-hidden min-w-0">
               {(
@@ -2033,8 +2023,8 @@ export default function Home() {
                     return (
                       <>
                         {/* Mobile: Show SwipeToLoad only (cartoon moved to bottom of chat box) */}
-                        <div className="lg:hidden mb-6 max-w-xl lg:mx-auto">
-                          <div className="flex flex-col items-center pt-0 pb-4">
+                        <div className="lg:hidden mb-2 max-w-xl lg:mx-auto">
+                          <div className="flex flex-col items-center pt-0 pb-2">
                             <SwipeToLoad messages={useFunMessages ? FUN_LOADING_MESSAGES : undefined} />
                           </div>
                         </div>
@@ -2353,7 +2343,7 @@ export default function Home() {
               
               {/* Mobile: Show cartoon at bottom of chat box on credit card background */}
               {currentCartoon && (
-                <div className="lg:hidden mb-6 flex flex-col items-center flex-shrink-0 max-w-sm" style={{ marginTop: '2.5rem' }}>
+                <div className="lg:hidden mb-6 flex flex-col items-center flex-shrink-0 max-w-sm" style={{ marginTop: isLoading ? '0.5rem' : '2.5rem' }}>
                   <div className="w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl relative" style={{
                     aspectRatio: '1.586 / 1', // Standard credit card ratio
                     background: 'linear-gradient(135deg, #93c5fd 0%, #bfdbfe 50%, #dbeafe 100%)',
@@ -2615,9 +2605,9 @@ export default function Home() {
         </div>
         )}
 
-        {/* Fixed Mobile Input Box at Bottom - Only show on mobile when chatbot is visible and there are messages */}
-        {messages.some(msg => msg.role === 'user') && isChatbotVisible && (
-          <div className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-white/95 backdrop-blur-sm border-t border-slate-200 shadow-lg px-4 py-3">
+        {/* Mobile Input Box - In normal flow after chatbot content */}
+        {messages.some(msg => msg.role === 'user') && (
+          <div className="lg:hidden px-4 py-4 mb-6">
             <div className="flex flex-col sm:flex-row gap-3 max-w-sm mx-auto">
               <div className="flex-1 relative">
                 <input
