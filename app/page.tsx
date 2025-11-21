@@ -76,6 +76,14 @@ export default function Home() {
   const [expandedRecommendations, setExpandedRecommendations] = useState<Set<number>>(new Set());
   const [isMobile, setIsMobile] = useState(false);
   const [isChatbotVisible, setIsChatbotVisible] = useState(true);
+  
+  // On desktop, show only 6 questions in the carousel
+  const [isDesktop, setIsDesktop] = useState(false);
+  
+  // Questions to show in carousel (6 on desktop, all on mobile)
+  const carouselQuestions = useMemo(() => {
+    return isDesktop ? SUGGESTED_QUESTIONS.slice(0, 6) : SUGGESTED_QUESTIONS;
+  }, [isDesktop]);
   const shownCartoonsRef = useRef<string[]>([]);
   const chatbotContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -119,15 +127,17 @@ export default function Home() {
     shownCartoonsRef.current = shownCartoons;
   }, [shownCartoons]);
 
-  // Detect mobile screen size
+  // Detect mobile and desktop screen size
   useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(typeof window !== 'undefined' && window.innerWidth < 1024);
+    const checkScreenSize = () => {
+      const width = typeof window !== 'undefined' ? window.innerWidth : 0;
+      setIsMobile(width < 1024);
+      setIsDesktop(width >= 1024);
     };
     
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
+    checkScreenSize();
+    window.addEventListener('resize', checkScreenSize);
+    return () => window.removeEventListener('resize', checkScreenSize);
   }, []);
 
   // Track chatbot container visibility for mobile
@@ -338,8 +348,12 @@ export default function Home() {
       const cardWidth = 280;
       const gap = 12; // gap-3 = 12px
       const cardSpacing = cardWidth + gap;
-      const newIndex = Math.round(scrollLeft / cardSpacing);
-      setPopularQuestionsCarouselIndex(Math.min(newIndex, SUGGESTED_QUESTIONS.length - 1));
+      // Use Math.floor to ensure we snap to the leftmost visible card
+      // Add a small offset (half the card spacing) to determine which card is most centered
+      const newIndex = Math.floor((scrollLeft + cardSpacing / 2) / cardSpacing);
+      // Clamp the index to valid range
+      const clampedIndex = Math.max(0, Math.min(newIndex, SUGGESTED_QUESTIONS.length - 1));
+      setPopularQuestionsCarouselIndex(clampedIndex);
       
       // Calculate scroll progress for smooth bar movement (0 to 1)
       const maxScroll = carousel.scrollWidth - carousel.clientWidth;
@@ -654,7 +668,8 @@ export default function Home() {
     };
   }, []);
 
-  // Enable horizontal mouse wheel scrolling, drag-to-scroll, and hide scrollbar for popular questions carousel (desktop)
+  // Unified edge scrolling system for popular questions carousel (desktop)
+  // Handles hover, drag, and wheel interactions with continuous edge scrolling
   useEffect(() => {
     const carousel = popularQuestionsCarouselRef.current;
     if (!carousel) return;
@@ -671,29 +686,17 @@ export default function Home() {
       let styleElement = document.getElementById('popular-questions-carousel-scrollbar-style');
       
       if (isDesktop) {
-        // Show thin scrollbar on desktop
-        carousel.style.scrollbarWidth = 'thin';
-        carousel.style.setProperty('-ms-overflow-style', 'auto', 'important');
+        // Hide scrollbar on desktop (keep pagination dots)
+        carousel.style.scrollbarWidth = 'none';
+        carousel.style.setProperty('-ms-overflow-style', 'none', 'important');
         
-        // For webkit browsers, show thin scrollbar
+        // For webkit browsers, hide scrollbar
         if (!styleElement) {
           styleElement = document.createElement('style');
           styleElement.id = 'popular-questions-carousel-scrollbar-style';
           styleElement.textContent = `
             #popular-questions-carousel::-webkit-scrollbar {
-              display: block !important;
-              height: 8px;
-            }
-            #popular-questions-carousel::-webkit-scrollbar-track {
-              background: rgb(241, 245, 249);
-              border-radius: 4px;
-            }
-            #popular-questions-carousel::-webkit-scrollbar-thumb {
-              background: rgb(203, 213, 225);
-              border-radius: 4px;
-            }
-            #popular-questions-carousel::-webkit-scrollbar-thumb:hover {
-              background: rgb(148, 163, 184);
+              display: none !important;
             }
           `;
           document.head.appendChild(styleElement);
@@ -701,19 +704,7 @@ export default function Home() {
           // Update existing style
           styleElement.textContent = `
             #popular-questions-carousel::-webkit-scrollbar {
-              display: block !important;
-              height: 8px;
-            }
-            #popular-questions-carousel::-webkit-scrollbar-track {
-              background: rgb(241, 245, 249);
-              border-radius: 4px;
-            }
-            #popular-questions-carousel::-webkit-scrollbar-thumb {
-              background: rgb(203, 213, 225);
-              border-radius: 4px;
-            }
-            #popular-questions-carousel::-webkit-scrollbar-thumb:hover {
-              background: rgb(148, 163, 184);
+              display: none !important;
             }
           `;
         }
@@ -742,32 +733,212 @@ export default function Home() {
       }
     };
 
+    // ===== Unified Edge Scrolling System =====
+    // This system provides continuous scrolling when at edges during any interaction type (hover, drag, wheel).
+    // 
+    // Key behaviors:
+    // 1. When user reaches left/right edge and continues interacting in that direction, carousel keeps scrolling smoothly
+    // 2. Works for hover (edge zones), drag (mouse drag), and wheel (scroll wheel/trackpad)
+    // 3. Respects scroll snap - cards still land cleanly on snap points
+    // 4. Returns to bounds smoothly when interaction stops (not during active scrolling)
+    // 5. Preserves click vs drag detection - clicks still navigate, drags don't trigger navigation
+    
+    const EDGE_THRESHOLD = 5; // Pixels from edge to consider "at edge"
+    const MAX_OVERSCROLL = 200; // Maximum pixels to allow beyond bounds for smooth feel
+    const CONTINUOUS_SCROLL_SPEED = 3; // Pixels per frame for continuous scroll animation
+    const EDGE_ZONE_WIDTH = 100; // Width of edge zones (left/right) for hover detection
+
+    // State for continuous edge scrolling
+    let continuousScrollAnimationFrame: number | null = null;
+    let continuousScrollDirection: 'left' | 'right' | null = null;
+    let isContinuousScrolling = false;
+    let returnToBoundsTimeout: number | null = null;
+    let isDragging = false;
+    let isWheeling = false;
+    let lastWheelTime = 0;
+    const WHEEL_IDLE_TIME = 150; // ms after last wheel event before considering wheel interaction stopped
+
+    // Detect edge state
+    const getEdgeState = () => {
+      const maxScroll = carousel.scrollWidth - carousel.clientWidth;
+      const currentScroll = carousel.scrollLeft;
+      const isAtStart = currentScroll <= EDGE_THRESHOLD;
+      const isAtEnd = currentScroll >= maxScroll - EDGE_THRESHOLD;
+      return { isAtStart, isAtEnd, maxScroll, currentScroll };
+    };
+
+    // Start continuous scrolling in a direction
+    const startContinuousScroll = (direction: 'left' | 'right') => {
+      if (continuousScrollDirection === direction && isContinuousScrolling) {
+        return; // Already scrolling in this direction
+      }
+
+      // Cancel any pending return to bounds
+      if (returnToBoundsTimeout !== null) {
+        clearTimeout(returnToBoundsTimeout);
+        returnToBoundsTimeout = null;
+      }
+
+      continuousScrollDirection = direction;
+      isContinuousScrolling = true;
+
+      if (continuousScrollAnimationFrame === null) {
+        const continuousScroll = () => {
+          if (!isContinuousScrolling || !continuousScrollDirection) {
+            isContinuousScrolling = false;
+            if (continuousScrollAnimationFrame !== null) {
+              cancelAnimationFrame(continuousScrollAnimationFrame);
+              continuousScrollAnimationFrame = null;
+            }
+            return;
+          }
+
+          const { maxScroll, currentScroll } = getEdgeState();
+
+          if (continuousScrollDirection === 'left') {
+            // Scroll left (showing earlier items)
+            carousel.scrollLeft = Math.max(-MAX_OVERSCROLL, currentScroll - CONTINUOUS_SCROLL_SPEED);
+          } else if (continuousScrollDirection === 'right') {
+            // Scroll right (showing later items)
+            carousel.scrollLeft = Math.min(maxScroll + MAX_OVERSCROLL, currentScroll + CONTINUOUS_SCROLL_SPEED);
+          }
+
+          continuousScrollAnimationFrame = requestAnimationFrame(continuousScroll);
+        };
+
+        continuousScrollAnimationFrame = requestAnimationFrame(continuousScroll);
+      }
+    };
+
+    // Stop continuous scrolling
+    const stopContinuousScroll = (immediateReturnToBounds = false) => {
+      isContinuousScrolling = false;
+      continuousScrollDirection = null;
+
+      if (continuousScrollAnimationFrame !== null) {
+        cancelAnimationFrame(continuousScrollAnimationFrame);
+        continuousScrollAnimationFrame = null;
+      }
+
+      // Return to bounds after a delay (unless immediate)
+      if (immediateReturnToBounds) {
+        returnToBounds();
+      } else {
+        // Delay return to bounds to allow smooth transition
+        if (returnToBoundsTimeout !== null) {
+          clearTimeout(returnToBoundsTimeout);
+        }
+        returnToBoundsTimeout = window.setTimeout(() => {
+          returnToBounds();
+        }, 300);
+      }
+    };
+
+    // Smoothly return carousel to bounds if overscrolled
+    const returnToBounds = () => {
+      const { maxScroll, currentScroll } = getEdgeState();
+      
+      if (currentScroll < 0) {
+        carousel.scrollTo({ left: 0, behavior: 'smooth' });
+      } else if (currentScroll > maxScroll) {
+        carousel.scrollTo({ left: maxScroll, behavior: 'smooth' });
+      }
+    };
+
+    // Check if interaction should trigger continuous scroll
+    const checkAndTriggerContinuousScroll = (direction: 'left' | 'right' | null, interactionType: 'hover' | 'drag' | 'wheel') => {
+      if (!direction) {
+        // If no direction or not at edge, stop continuous scroll
+        if (interactionType === 'hover') {
+          stopContinuousScroll();
+        }
+        return;
+      }
+
+      const { isAtStart, isAtEnd } = getEdgeState();
+
+      // Only start continuous scroll if at the corresponding edge
+      if (direction === 'left' && isAtStart) {
+        startContinuousScroll('left');
+      } else if (direction === 'right' && isAtEnd) {
+        startContinuousScroll('right');
+      } else if (interactionType === 'hover') {
+        // For hover, stop if not at edge
+        stopContinuousScroll();
+      }
+    };
+
+    // ===== Wheel Handler =====
     const handleWheel = (e: WheelEvent) => {
       // Only handle on desktop
       const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
       if (!isDesktop) return;
 
-      // If there's horizontal delta (trackpad horizontal scroll), allow native scrolling
+      isWheeling = true;
+      lastWheelTime = Date.now();
+
+      // Clear wheel idle timeout
+      if (returnToBoundsTimeout !== null) {
+        clearTimeout(returnToBoundsTimeout);
+        returnToBoundsTimeout = null;
+      }
+
+      // Determine scroll direction
+      let scrollDirection: 'left' | 'right' | null = null;
+      let delta = 0;
+
       if (Math.abs(e.deltaX) > 0) {
-        // Native horizontal scrolling - don't prevent default
-        return;
+        // Horizontal scroll
+        delta = e.deltaX;
+        scrollDirection = delta < 0 ? 'left' : 'right';
+      } else if (Math.abs(e.deltaY) > 0) {
+        // Vertical scroll converted to horizontal
+        delta = e.deltaY;
+        scrollDirection = delta < 0 ? 'left' : 'right';
       }
-      
-      // If vertical scroll, convert to horizontal
-      if (Math.abs(e.deltaY) > 0 && Math.abs(e.deltaX) === 0) {
+
+      const { isAtStart, isAtEnd, maxScroll, currentScroll } = getEdgeState();
+
+      // If at edge and scrolling in that direction, allow overscroll and trigger continuous scroll
+      if (scrollDirection === 'left' && isAtStart) {
         e.preventDefault();
-        carousel.scrollLeft += e.deltaY;
+        const newScroll = Math.max(-MAX_OVERSCROLL, currentScroll + delta);
+        carousel.scrollLeft = newScroll;
+        startContinuousScroll('left');
+      } else if (scrollDirection === 'right' && isAtEnd) {
+        e.preventDefault();
+        const newScroll = Math.min(maxScroll + MAX_OVERSCROLL, currentScroll + delta);
+        carousel.scrollLeft = newScroll;
+        startContinuousScroll('right');
+      } else if (scrollDirection) {
+        // Normal scrolling - apply scroll and stop continuous scroll
+        e.preventDefault();
+        if (Math.abs(e.deltaX) > 0) {
+          carousel.scrollLeft = Math.max(0, Math.min(maxScroll, currentScroll + e.deltaX));
+        } else {
+          carousel.scrollLeft = Math.max(0, Math.min(maxScroll, currentScroll + e.deltaY));
+        }
+        stopContinuousScroll();
       }
+
+      // Set timeout to detect when wheel interaction stops
+      setTimeout(() => {
+        if (Date.now() - lastWheelTime >= WHEEL_IDLE_TIME) {
+          isWheeling = false;
+          if (!isDragging) {
+            stopContinuousScroll();
+          }
+        }
+      }, WHEEL_IDLE_TIME);
     };
 
-    // Drag-to-scroll functionality for desktop
+    // ===== Drag Handler =====
     let isDown = false;
     let startX = 0;
-    let scrollLeft = 0;
+    let initialScrollLeft = 0;
     let hasDragged = false;
 
     const handleDragStart = (e: DragEvent) => {
-      // Prevent default drag behavior for images and links
       if (isDown) {
         e.preventDefault();
         return false;
@@ -778,7 +949,6 @@ export default function Home() {
       const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
       if (!isDesktop) return;
       
-      // Don't start drag if clicking on carousel indicators or arrow buttons
       const target = e.target as HTMLElement;
       if (target.closest('[aria-label*="slide"]') || 
           target.closest('[data-indicator-button]') ||
@@ -789,115 +959,145 @@ export default function Home() {
         return;
       }
 
-      // Allow dragging even when clicking on question buttons
-      // The button handlers will prevent clicks if we detect a drag
       isDown = true;
+      isDragging = false;
       hasDragged = false;
       carousel.style.cursor = 'grabbing';
       carousel.style.userSelect = 'none';
-      // Track starting mouse X position and current scroll position
       startX = e.clientX;
-      scrollLeft = carousel.scrollLeft;
+      initialScrollLeft = carousel.scrollLeft;
       
-      // Prevent default to avoid text selection and image dragging
       e.preventDefault();
       
-      // Mark that we're starting a potential drag on a button
-      // This will be checked by the button click handler
       if (target.closest('button') && !target.closest('[aria-label*="slide"]') && !target.closest('[data-indicator-button]')) {
         carouselButtonHasDraggedRef.current = false;
       }
     };
 
-    const handleMouseLeave = () => {
-      if (isDown) {
-        isDown = false;
-        hasDragged = false;
-        carousel.style.cursor = 'grab';
-        carousel.style.userSelect = '';
-      }
-    };
-
     const handleMouseUp = (e: MouseEvent) => {
       if (isDown) {
-        // If we dragged, prevent button click and reset button tracking
         if (hasDragged) {
           e.preventDefault();
           e.stopPropagation();
-          // Reset button click tracking to prevent accidental navigation
           carouselButtonMouseDownRef.current = null;
           carouselButtonHasDraggedRef.current = true;
         }
         isDown = false;
+        isDragging = false;
         hasDragged = false;
         carousel.style.cursor = 'grab';
         carousel.style.userSelect = '';
+        stopContinuousScroll(true);
       }
     };
 
     const handleDocumentMouseUp = (e: MouseEvent) => {
       if (isDown) {
-        // If we dragged, prevent button click and reset button tracking
         if (hasDragged) {
           e.preventDefault();
           e.stopPropagation();
-          // Reset button click tracking to prevent accidental navigation
           carouselButtonMouseDownRef.current = null;
           carouselButtonHasDraggedRef.current = true;
         }
         isDown = false;
+        isDragging = false;
         hasDragged = false;
         carousel.style.cursor = 'grab';
         carousel.style.userSelect = '';
+        stopContinuousScroll(true);
       }
     };
 
     const handleDocumentMouseMove = (e: MouseEvent) => {
       if (!isDown) return;
       
-      // Calculate distance moved
       const currentX = e.clientX;
       const deltaX = currentX - startX;
       
-      // Only consider it a drag if moved more than 3px
       if (Math.abs(deltaX) > 3) {
         hasDragged = true;
-        // Mark that we've dragged, so button clicks won't fire
+        isDragging = true;
         carouselButtonHasDraggedRef.current = true;
       }
       
-      // Prevent default drag behavior and text selection
       e.preventDefault();
       
-      // Scroll the carousel: moving mouse right scrolls content right, moving mouse left scrolls content left
-      // User wants: drag right reveals right content (scrollLeft increases), drag left reveals left content (scrollLeft decreases)
-      // Formula: scrollLeft = initialScrollLeft + deltaX
-      // This makes: drag right (positive deltaX) increases scrollLeft (shows right content)
-      const newScrollLeft = scrollLeft + deltaX;
+      const newScrollLeft = initialScrollLeft + deltaX;
+      const { isAtStart, isAtEnd, maxScroll } = getEdgeState();
       
-      // Ensure we don't scroll beyond bounds
-      const maxScroll = carousel.scrollWidth - carousel.clientWidth;
-      carousel.scrollLeft = Math.max(0, Math.min(newScrollLeft, maxScroll));
+      // Determine drag direction
+      const dragDirection: 'left' | 'right' | null = deltaX < 0 ? 'left' : (deltaX > 0 ? 'right' : null);
+      
+      // Apply scroll with overscroll at edges
+      if (isAtStart && dragDirection === 'left') {
+        carousel.scrollLeft = Math.max(-MAX_OVERSCROLL, newScrollLeft);
+        startContinuousScroll('left');
+      } else if (isAtEnd && dragDirection === 'right') {
+        carousel.scrollLeft = Math.min(maxScroll + MAX_OVERSCROLL, newScrollLeft);
+        startContinuousScroll('right');
+      } else {
+        carousel.scrollLeft = Math.max(0, Math.min(newScrollLeft, maxScroll));
+        stopContinuousScroll();
+      }
     };
 
+    // ===== Hover Edge Detection =====
+    const handleCarouselMouseMove = (e: MouseEvent) => {
+      if (isDown || isWheeling) return; // Don't interfere with drag or wheel
+
+      const rect = carousel.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const carouselWidth = rect.width;
+      
+      const inLeftZone = mouseX >= 0 && mouseX <= EDGE_ZONE_WIDTH;
+      const inRightZone = mouseX >= carouselWidth - EDGE_ZONE_WIDTH && mouseX <= carouselWidth;
+
+      const hoverDirection: 'left' | 'right' | null = inLeftZone ? 'left' : (inRightZone ? 'right' : null);
+      checkAndTriggerContinuousScroll(hoverDirection, 'hover');
+    };
+
+    const handleCarouselMouseLeave = () => {
+      if (isDown) {
+        // Handle drag ending
+        isDown = false;
+        isDragging = false;
+        hasDragged = false;
+        carousel.style.cursor = 'grab';
+        carousel.style.userSelect = '';
+        stopContinuousScroll(true);
+      } else if (!isWheeling) {
+        // Handle hover ending
+        stopContinuousScroll();
+      }
+    };
+
+    // ===== Setup =====
     updateScrollbar();
     carousel.style.cursor = 'grab';
     carousel.addEventListener('wheel', handleWheel, { passive: false });
     carousel.addEventListener('dragstart', handleDragStart);
-    // Use capture phase to catch mousedown even on buttons inside
     carousel.addEventListener('mousedown', handleMouseDown, { capture: true });
-    carousel.addEventListener('mouseleave', handleMouseLeave);
+    carousel.addEventListener('mouseleave', handleCarouselMouseLeave);
     carousel.addEventListener('mouseup', handleMouseUp);
+    carousel.addEventListener('mousemove', handleCarouselMouseMove, { passive: true });
     document.addEventListener('mouseup', handleDocumentMouseUp);
     document.addEventListener('mousemove', handleDocumentMouseMove);
     window.addEventListener('resize', updateScrollbar);
 
     return () => {
+      // Cleanup
+      if (continuousScrollAnimationFrame !== null) {
+        cancelAnimationFrame(continuousScrollAnimationFrame);
+      }
+      if (returnToBoundsTimeout !== null) {
+        clearTimeout(returnToBoundsTimeout);
+      }
       carousel.removeEventListener('wheel', handleWheel);
       carousel.removeEventListener('dragstart', handleDragStart);
       carousel.removeEventListener('mousedown', handleMouseDown, { capture: true });
-      carousel.removeEventListener('mouseleave', handleMouseLeave);
+      carousel.removeEventListener('mouseleave', handleCarouselMouseLeave);
       carousel.removeEventListener('mouseup', handleMouseUp);
+      carousel.removeEventListener('mousemove', handleCarouselMouseMove);
       document.removeEventListener('mouseup', handleDocumentMouseUp);
       document.removeEventListener('mousemove', handleDocumentMouseMove);
       window.removeEventListener('resize', updateScrollbar);
@@ -907,6 +1107,7 @@ export default function Home() {
       }
     };
   }, []);
+
 
   // Document-level mouse tracking for carousel button click-vs-drag detection
   useEffect(() => {
@@ -1827,88 +2028,139 @@ export default function Home() {
                 touchAction: 'pan-x'
               }}
             >
-              {SUGGESTED_QUESTIONS.map((question, index) => (
-                <button
-                  key={index}
-                  onClick={(e) => {
-                    // Prevent click if we detected a drag
-                    if (carouselButtonHasDraggedRef.current) {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      return;
-                    }
-                    handleSuggestedQuestion(question.text);
-                  }}
-                  disabled={isLoading}
-                  className="bg-white rounded-xl p-2.5 sm:p-3 border border-slate-200 hover:border-blue-300 hover:shadow-md hover:scale-105 transition-all duration-200 h-[240px] sm:h-[240px] w-[280px] sm:w-[280px] flex-shrink-0 snap-center flex flex-col disabled:opacity-50 disabled:cursor-not-allowed group focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2"
-                >
-                  <div className="flex flex-col items-center text-center space-y-4 flex-1 justify-center">
-                    <div className="rounded-full bg-primary/10 p-4 min-w-[56px] min-h-[56px] flex items-center justify-center">
-                      {renderSuggestedIcon(question.icon, 'w-7 h-7', true)}
-                    </div>
-                    <h3 className="font-semibold text-base text-card-foreground leading-tight px-2">
-                      {question.mobileText || question.text}
-                    </h3>
-                    <p className="text-base md:text-sm text-muted-foreground leading-relaxed px-2">
-                      {question.description}
-                    </p>
-                  </div>
-                </button>
-              ))}
-            </div>
-            {/* Carousel Indicators */}
-            {SUGGESTED_QUESTIONS.length > 0 && (() => {
-              const totalDots = SUGGESTED_QUESTIONS.length;
-              const dotWidth = 0.5; // w-2 = 0.5rem (inactive), w-6 = 1.5rem (active)
-              const gap = 0.5; // gap-2 = 0.5rem
-              const barWidth = 1.5; // width of sliding bar
-              
-              // Calculate positions based on actual dot layout
-              const dotSpacing = dotWidth + gap; // 1rem between dot left edges
-              const leftmostPosition = 0;
-              const rightmostDotLeftEdge = (totalDots - 1) * dotSpacing;
-              const rightmostDotRightEdge = rightmostDotLeftEdge + 1.5; // 4.5rem (active)
-              const rightmostPosition = rightmostDotRightEdge - barWidth;
-              
-              // Map scroll progress (0-1) to bar position
-              const scaledProgress = Math.min(popularQuestionsCarouselScrollProgress / 0.75, 1.0);
-              const barPosition = scaledProgress * rightmostPosition;
-              
-              return (
-                <div className="flex justify-center gap-2 mt-4 relative" style={{ width: 'fit-content', margin: '1rem auto 0' }}>
-                  {/* Sliding indicator bar */}
-                  <div 
-                    className="absolute h-2 bg-primary rounded-full transition-all duration-75 ease-out"
-                    style={{
-                      width: '1.5rem',
-                      left: `${barPosition}rem`,
-                      top: '0',
-                      transform: 'translateY(0)'
+              {carouselQuestions.map((question, index) => (
+                  <button
+                    key={index}
+                    onClick={(e) => {
+                      // Prevent click if we detected a drag
+                      if (carouselButtonHasDraggedRef.current) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return;
+                      }
+                      handleSuggestedQuestion(question.text);
                     }}
-                  />
-                  {SUGGESTED_QUESTIONS.map((_, index) => (
-                    <button
-                      key={index}
-                      onClick={() => {
-                        if (popularQuestionsCarouselRef.current) {
-                          // Card width is 280px
-                          const cardWidth = 280;
-                          const gap = 12; // gap-3 = 12px
-                          popularQuestionsCarouselRef.current.scrollTo({
-                            left: index * (cardWidth + gap),
-                            behavior: 'smooth'
-                          });
-                        }
-                      }}
-                      className={`w-2 h-2 rounded-full transition-all duration-200 relative z-10 ${
-                        index === popularQuestionsCarouselIndex ? 'bg-primary w-6' : 'bg-slate-300'
-                      }`}
-                      aria-label={`Go to slide ${index + 1}`}
-                    />
-                  ))}
-                </div>
-              );
-            })()}
+                    disabled={isLoading}
+                    className="bg-white rounded-xl p-2.5 sm:p-3 border border-slate-200 hover:border-blue-300 hover:shadow-md hover:scale-105 transition-all duration-200 h-[240px] sm:h-[240px] w-[280px] sm:w-[280px] flex-shrink-0 snap-center flex flex-col disabled:opacity-50 disabled:cursor-not-allowed group focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2"
+                  >
+                    <div className="flex flex-col items-center text-center space-y-4 flex-1 justify-center">
+                      <div className="rounded-full bg-primary/10 p-4 min-w-[56px] min-h-[56px] flex items-center justify-center">
+                        {renderSuggestedIcon(question.icon, 'w-7 h-7', true)}
+                      </div>
+                      <h3 className="font-semibold text-base text-card-foreground leading-tight px-2">
+                        {question.mobileText || question.text}
+                      </h3>
+                      <p className="text-base md:text-sm text-muted-foreground leading-relaxed px-2">
+                        {question.description}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+            </div>
+            {/* Carousel Indicators with Tracking Bar */}
+            {carouselQuestions.length > 0 && (
+              <div className="flex justify-center gap-2 mt-4 relative" style={{ width: 'fit-content', margin: '1rem auto 0' }}>
+                {(() => {
+                  // Show a maximum of 5 dots
+                  const maxDots = 5;
+                  const totalItems = carouselQuestions.length;
+                  const numDots = Math.min(maxDots, totalItems);
+                  
+                  // Calculate which item indices to show as dots
+                  // Distribute dots evenly across the carousel
+                  const dotIndices: number[] = [];
+                  if (totalItems <= maxDots) {
+                    // If we have fewer items than max dots, show all
+                    for (let i = 0; i < totalItems; i++) {
+                      dotIndices.push(i);
+                    }
+                  } else {
+                    // Distribute dots evenly across the carousel
+                    for (let i = 0; i < numDots; i++) {
+                      const index = Math.round((i / (numDots - 1)) * (totalItems - 1));
+                      dotIndices.push(index);
+                    }
+                  }
+                  
+                  const currentIndex = popularQuestionsCarouselIndex;
+                  
+                  // Find which dot is closest to the current carousel position
+                  const getClosestDotIndex = () => {
+                    return dotIndices.reduce((prev, curr) => 
+                      Math.abs(curr - currentIndex) < Math.abs(prev - currentIndex) ? curr : prev
+                    );
+                  };
+                  
+                  const activeDotIndex = getClosestDotIndex();
+                  
+                  // Calculate tracking bar position
+                  // Bar should extend from left edge (0) to right edge when at rightmost position
+                  const dotWidth = 0.5; // w-2 = 0.5rem (inactive), w-6 = 1.5rem (active)
+                  const gap = 0.5; // gap-2 = 0.5rem
+                  const barWidth = 1.5; // width of sliding bar in rem
+                  const dotSpacing = dotWidth + gap; // 1rem between dot left edges
+                  
+                  // Calculate the total width of the dots container
+                  // For each dot: spacing between dots + width of active dot
+                  // Rightmost dot's left edge position
+                  const rightmostDotLeftEdge = (dotIndices.length - 1) * dotSpacing;
+                  // Rightmost dot's right edge when active (w-6 = 1.5rem)
+                  const rightmostDotRightEdge = rightmostDotLeftEdge + 1.5;
+                  
+                  // Bar should extend all the way to the right edge when at rightmost position
+                  // When progress = 1.0, bar's right edge should align with rightmost dot's right edge
+                  // So bar's left edge should be at: rightmostDotRightEdge - barWidth
+                  const rightmostPosition = rightmostDotRightEdge - barWidth;
+                  
+                  // Use scroll progress to position the bar
+                  // When progress = 1.0 (fully scrolled right), bar should be at rightmostPosition (extending to right edge)
+                  // When progress = 0.0 (at start), bar should be at 0
+                  // Ensure bar reaches the rightmost position when progress is 1.0
+                  const barPosition = popularQuestionsCarouselScrollProgress >= 1.0 
+                    ? rightmostPosition 
+                    : popularQuestionsCarouselScrollProgress * rightmostPosition;
+                  
+                  return (
+                    <>
+                      {/* Sliding indicator bar */}
+                      <div 
+                        className="absolute h-2 bg-primary rounded-full transition-all duration-75 ease-out"
+                        style={{
+                          width: '1.5rem',
+                          left: `${barPosition}rem`,
+                          top: '0',
+                          transform: 'translateY(0)'
+                        }}
+                      />
+                      {dotIndices.map((itemIndex) => {
+                        const isActive = itemIndex === activeDotIndex;
+                        
+                        return (
+                          <button
+                            key={itemIndex}
+                            onClick={() => {
+                              if (popularQuestionsCarouselRef.current) {
+                                // Card width is 280px
+                                const cardWidth = 280;
+                                const gap = 12; // gap-3 = 12px
+                                popularQuestionsCarouselRef.current.scrollTo({
+                                  left: itemIndex * (cardWidth + gap),
+                                  behavior: 'smooth'
+                                });
+                              }
+                            }}
+                            className={`w-2 h-2 rounded-full transition-all duration-200 relative z-10 ${
+                              isActive ? 'bg-slate-300 w-2' : 'bg-slate-300'
+                            }`}
+                            aria-label={`Go to slide ${itemIndex + 1}`}
+                          />
+                        );
+                      })}
+                    </>
+                  );
+                })()}
+              </div>
+            )}
           </div>
         )}
 
