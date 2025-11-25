@@ -1521,6 +1521,9 @@ export default function Home() {
     if (isNewQuestion) {
       // Reset left box scroll tracking - allow auto-scroll
       userHasScrolledLeftRef.current = false;
+      // Collapse any expanded credit card info boxes (mobile + desktop) when a new question starts
+      setOpenCardBoxes(new Set());
+      setDesktopExpandedRecommendations(new Set());
       // Note: Left box scrolling is handled in the separate useEffect below
       prevMessageCountRef.current = currentMessageCount;
     }
@@ -1529,6 +1532,7 @@ export default function Home() {
       prevRecommendationsRef.current = currentRecommendations;
       // Reset collapsible boxes: all closed by default
       setOpenCardBoxes(new Set([]));
+      setDesktopExpandedRecommendations(new Set());
     } else if (currentRecommendations.length === 0) {
       prevRecommendationsRef.current = [];
     }
@@ -2458,7 +2462,7 @@ export default function Home() {
                       onChange={(e) => setInput(e.target.value)}
                       onKeyPress={handleKeyPress}
                       placeholder="Ask about credit cards, rewards, travel perks..."
-                      className="w-full h-auto py-3 md:py-6 px-3 pr-20 md:pr-28 text-base md:text-sm border border-input rounded-lg bg-card text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 transition-all"
+                      className="w-full h-auto py-3 md:py-6 px-3 pr-20 md:pr-28 text-base border border-input rounded-lg bg-card text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 transition-all"
                     />
                     <button
                       onClick={handleSend}
@@ -2577,10 +2581,10 @@ export default function Home() {
                           {getDesktopIcon()}
                         </div>
                       </div>
-                      <h3 className="font-semibold text-base text-card-foreground leading-tight">
+                      <h3 className="font-semibold text-base text-card-foreground md:leading-tight">
                         {question.text}
                       </h3>
-                      <p className="text-sm text-muted-foreground leading-relaxed">
+                      <p className="text-sm text-muted-foreground md:leading-relaxed">
                         {question.description}
                       </p>
                     </div>
@@ -2629,10 +2633,10 @@ export default function Home() {
                           {renderSuggestedIcon(question.icon, 'w-7 h-7', true)}
                         </div>
                       </div>
-                      <h3 className="font-semibold text-base text-card-foreground leading-tight px-2">
+                      <h3 className="font-semibold text-base text-card-foreground md:leading-tight px-2">
                         {question.mobileText || question.text}
                       </h3>
-                      <p className="text-base md:text-sm text-muted-foreground leading-relaxed px-2">
+                      <p className="text-base md:text-sm text-muted-foreground md:leading-relaxed px-2">
                         {question.description}
                       </p>
                     </div>
@@ -2825,8 +2829,8 @@ export default function Home() {
                       <div className="flex items-center gap-3 mb-6">
                         <div className="w-1 h-8 bg-gradient-to-b from-primary to-accent rounded-full"></div>
                         <div>
-                          <h3 className="text-2xl font-bold text-slate-900">Conversation History</h3>
-                          <p className="text-sm text-slate-500 mt-1">Your chats with the AI, all right where you left them.</p>
+                          <h3 className="text-2xl md:text-3xl font-bold text-foreground">Conversation History</h3>
+                          <p className="text-sm md:text-base text-muted-foreground mt-1">Your chats with the AI, all right where you left them.</p>
                         </div>
                       </div>
                     <div 
@@ -2837,7 +2841,7 @@ export default function Home() {
                         overflowX: 'hidden', 
                         overflowY: chatbotNeedsScrolling ? 'auto' : 'hidden',
                         direction: 'rtl',
-                        paddingBottom: '0',
+                        paddingBottom: '10vh',
                         height: chatbotContainerHeight ? `${chatbotContainerHeight}px` : 'auto',
                         maxHeight: chatbotContainerHeight ? `${chatbotContainerHeight}px` : '600px'
                       }}
@@ -2988,14 +2992,21 @@ export default function Home() {
                         {/* Recommended Cards Section - At the bottom of the last response */}
                         {latestRecommendations.length > 0 && !isLoading && (
                           <div className={`${userConversationMessages.length === 1 ? 'lg:pt-2 pt-6' : 'pt-6'} border-t border-slate-200/60 lg:max-w-xl lg:mx-auto`}>
+                            <p className="hidden lg:block text-gray-500 text-sm mb-3">Details</p>
                             <div className="space-y-3">
                               {latestRecommendations.slice(0, 3).map((rec, index) => {
                                 const isExpanded = desktopExpandedRecommendations.has(index);
-                                  const benefits = extractBenefits(rec);
-                                  return (
+                                const benefits = extractBenefits(rec);
+                                const rating = getDerivedRating(index);
+                                const highlight = getRecommendationHighlight(rec);
+                                const containerClasses = isExpanded
+                                  ? 'rounded-2xl border-2 border-primary/30 bg-gradient-to-br from-white to-primary/5 shadow-lg'
+                                  : 'rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-white to-slate-50/50 shadow-md';
+                                
+                                return (
                                     <div
                                       key={`${rec.credit_card_name}-${index}-recommended`}
-                                      className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-white to-slate-50/50 shadow-md hover:shadow-lg hover:border-primary/30 overflow-hidden transition-all duration-300 group"
+                                      className={`${containerClasses} hover:shadow-lg hover:border-primary/30 overflow-hidden transition-all duration-300 group`}
                                     >
                                       <button
                                         type="button"
@@ -3010,36 +3021,38 @@ export default function Home() {
                                             return next;
                                           });
                                         }}
-                                        className="w-full flex items-center gap-6 px-6 py-6 text-left hover:bg-slate-50/50 transition-colors"
+                                        className="w-full flex items-center justify-between gap-4 px-6 py-5 text-left"
                                         aria-expanded={isExpanded}
                                       >
                                         <div className="flex-1 min-w-0">
-                                          <div className="flex items-center gap-3 mb-2">
-                                            <p className="text-xl font-bold text-slate-900 group-hover:text-primary transition-colors">{rec.credit_card_name}</p>
-                                            <div className="flex items-center gap-1 text-primary font-semibold bg-primary/10 px-2 py-1 rounded-lg">
-                                              <Star className="w-4 h-4 text-primary" fill="currentColor" />
-                                              <span className="text-sm">{getDerivedRating(index)}</span>
-                                            </div>
-                                          </div>
-                                          <p className="text-sm text-slate-600 leading-relaxed">{getRecommendationHighlight(rec)}</p>
+                                          <p className="text-lg md:text-base md:font-medium text-slate-900 md:text-card-foreground group-hover:text-primary transition-colors truncate">
+                                            {rec.credit_card_name}
+                                          </p>
                                         </div>
-                                        <div className="flex-shrink-0">
-                                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${isExpanded ? 'bg-primary/10 text-primary rotate-180' : 'bg-slate-100 text-slate-500 group-hover:bg-primary/10 group-hover:text-primary'}`}>
-                                            <ChevronDown className="w-5 h-5 transition-transform" />
-                                          </div>
+                                        <div className={`flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-all ${isExpanded ? 'bg-primary/10 text-primary rotate-180' : 'bg-slate-100 text-slate-500 group-hover:bg-primary/10 group-hover:text-primary'}`}>
+                                          <ChevronDown className="w-5 h-5 transition-transform" />
                                         </div>
                                       </button>
                                       {isExpanded && (
                                         <div className="px-6 pb-6 pt-2 space-y-5 border-t border-slate-100 bg-slate-50/30 animate-in slide-in-from-top-2 duration-200">
+                                          <div className="flex items-center gap-3 pt-4">
+                                            <div className="flex items-center gap-1 text-primary font-semibold bg-primary/10 px-2 py-1 rounded-lg">
+                                              <Star className="w-4 h-4 text-primary" fill="currentColor" />
+                                              <span className="text-sm">{rating}</span>
+                                            </div>
+                                            <p className="text-sm text-slate-600 md:text-muted-foreground md:leading-relaxed flex-1">
+                                              {highlight}
+                                            </p>
+                                          </div>
                                           {benefits.length > 0 && (
                                             <div className="space-y-3 pt-4">
-                                              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Key Benefits</p>
+                                              <p className="text-xs font-semibold text-slate-500 md:text-muted-foreground uppercase md:tracking-wider mb-2">Key Benefits</p>
                                               {benefits.map((benefit, idx) => (
                                                 <div key={idx} className="flex items-start gap-3">
                                                   <div className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center mt-0.5">
                                                     <Check className="w-3 h-3 text-primary" strokeWidth={3} />
                                                   </div>
-                                                  <p className="text-sm text-slate-700 leading-relaxed flex-1">{benefit}</p>
+                                                  <p className="text-sm text-slate-700 md:text-muted-foreground md:leading-relaxed flex-1">{benefit}</p>
                                                 </div>
                                               ))}
                                             </div>
@@ -3090,6 +3103,7 @@ export default function Home() {
                             src={currentCartoon.imageUrl}
                             alt="Cartoon"
                             className="max-w-full max-h-full object-contain"
+                            style={{ transform: 'scale(1.2)' }}
                             onError={(e) => {
                               const target = e.target as HTMLImageElement;
                               target.style.display = 'none';
@@ -3472,7 +3486,7 @@ export default function Home() {
                               <CreditCard className="w-5 h-5 text-teal-600" />
                             </div>
                             {/* Card Name */}
-                            <h4 className="font-semibold text-sm text-slate-900 text-left line-clamp-1 flex-1 min-w-0">
+                            <h4 className="font-semibold md:font-medium text-sm md:text-base text-slate-900 md:text-card-foreground text-left line-clamp-1 flex-1 min-w-0">
                               {rec.credit_card_name}
                             </h4>
                           </div>
@@ -3536,7 +3550,7 @@ export default function Home() {
                   {dynamicSuggestions.length > 0 && messages.length > 0 && !isLoading && (
                     <div className="hidden lg:block mt-6 pt-6 border-t border-slate-200/60">
                       <div className="flex items-center justify-between mb-4">
-                        <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">
+                        <p className="text-xs font-semibold text-slate-500 md:text-muted-foreground uppercase md:tracking-wider">
                           You might also ask
                         </p>
                         <span className="text-xs text-slate-400">Click a suggestion to auto-fill</span>
@@ -3885,10 +3899,7 @@ export default function Home() {
                     <>
                       <div className="flex flex-col gap-4 mb-6 w-full">
                         {mostRecentAssistantMessage.recommendations.slice(0, 3).map((rec, recIndex) => {
-                          // Extract issuer from card name (usually first word)
-                          const cardNameParts = rec.credit_card_name.split(' ');
-                          const issuer = cardNameParts[0];
-                          const cardName = cardNameParts.slice(1).join(' ') || rec.credit_card_name;
+                          const cardName = rec.credit_card_name;
                           const isOpen = openCardBoxes.has(recIndex);
                           
                           const benefits = extractBenefits(rec);
@@ -3905,29 +3916,24 @@ export default function Home() {
                             });
                           };
                           
+                          const containerClasses = isOpen
+                            ? 'rounded-xl border border-border shadow-md bg-gradient-to-br from-card to-blue-50 hover:shadow-lg'
+                            : 'rounded-xl border border-transparent';
+
                           return (
                             <div
                               key={recIndex}
-                              className="bg-gradient-to-br from-card to-blue-50 rounded-xl border border-border shadow-md hover:shadow-lg transition-all duration-300 overflow-hidden"
+                              className={`${containerClasses} transition-all duration-300 overflow-hidden`}
                             >
                               {/* Collapsible Header */}
                               <button
                                 onClick={toggleBox}
-                                className="w-full p-4 flex items-center justify-between hover:bg-slate-50/50 transition-colors"
+                                className="w-full px-2 py-3 flex items-center justify-between gap-4 text-left"
                               >
-                                <div className="flex items-center gap-3 flex-1 min-w-0">
-                                  {/* Card Icon */}
-                                  <div className="w-12 h-8 rounded bg-gradient-to-br from-primary/10 to-primary/5 border border-border flex-shrink-0 flex items-center justify-center">
-                                    <CreditCard className="w-4 h-4 text-primary" />
-                                  </div>
-                                  <div className="flex-1 min-w-0 text-left">
-                                    {/* Card Name */}
-                                    <h3 className="text-base font-semibold text-foreground leading-tight mb-0.5 truncate">
-                                      {cardName}
-                                    </h3>
-                                    {/* Issuer */}
-                                    <p className="text-xs text-muted-foreground truncate">{issuer}</p>
-                                  </div>
+                                <div className="flex-1 min-w-0">
+                                  <h3 className="text-base font-semibold text-foreground leading-tight truncate">
+                                    {cardName}
+                                  </h3>
                                 </div>
                                 {/* Toggle Icon */}
                                 <div className="flex-shrink-0 ml-3">
@@ -4036,7 +4042,7 @@ export default function Home() {
           <div className="max-w-[1100px] mx-auto px-4 py-4 transition-all duration-300">
             <div className="flex flex-col gap-4">
               <div className="flex items-center gap-3">
-                <div className="flex-1 relative">
+                <div className="relative w-[90%] mx-auto">
                   <input
                     type="text"
                     value={input}
