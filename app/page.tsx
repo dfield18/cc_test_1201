@@ -83,6 +83,12 @@ export default function Home() {
   // State for collapsible credit card boxes (all closed by default)
   const [openCardBoxes, setOpenCardBoxes] = useState<Set<number>>(new Set([]));
   const [desktopExpandedRecommendations, setDesktopExpandedRecommendations] = useState<Set<number>>(new Set());
+  // State to track if chatbot content is small (for dynamic container sizing)
+  const [isChatbotContentSmall, setIsChatbotContentSmall] = useState(true);
+  // State for dynamic chatbot container height (5% larger than content)
+  const [chatbotContainerHeight, setChatbotContainerHeight] = useState<number | null>(null);
+  // State to track if scrolling is needed
+  const [chatbotNeedsScrolling, setChatbotNeedsScrolling] = useState(false);
   
   // Questions to show in carousel (6 on desktop, all on mobile)
   const carouselQuestions = useMemo(() => {
@@ -136,6 +142,28 @@ export default function Home() {
   const lastUserMessage = userConversationMessages[userConversationMessages.length - 1];
   const hasAskedQuestion = userConversationMessages.length > 0;
   const latestRecommendations = latestAssistantMessage?.recommendations || [];
+
+  const normalizeText = (text: string) =>
+    text
+      ? text
+          .toLowerCase()
+          .replace(/https?:\/\/\S+/g, '')
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim()
+      : '';
+
+  const removeDuplicateFinalSentence = (text: string): string => {
+    if (!text) return text;
+    const sentenceMatches = text.match(/[^.!?]+[.!?]/g);
+    if (!sentenceMatches || sentenceMatches.length < 2) return text;
+    const lastSentence = sentenceMatches[sentenceMatches.length - 1].trim();
+    const prevSentence = sentenceMatches[sentenceMatches.length - 2].trim();
+    if (lastSentence && prevSentence && lastSentence === prevSentence) {
+      const lastIndex = text.lastIndexOf(sentenceMatches[sentenceMatches.length - 1]);
+      return text.slice(0, lastIndex).trimEnd();
+    }
+    return text;
+  };
 
   const getRecommendationHighlight = (rec: Recommendation) => {
     const highlight =
@@ -1521,35 +1549,120 @@ export default function Home() {
         if (!desktopChatbotRef.current) return;
         
         const container = desktopChatbotRef.current;
-        // Get the inner LTR div
-        const innerDiv = container.querySelector('div[style*="direction: ltr"]') as HTMLElement;
-        if (!innerDiv) return;
         
-        const messageElements = innerDiv.querySelectorAll('[data-message-index]');
+        // First, scroll the page to bring the chatbot section into view
+        const containerRect = container.getBoundingClientRect();
+        const containerTop = containerRect.top + window.scrollY;
+        const offset = 100; // Offset from top of viewport
         
-        if (messageElements.length > 0) {
-          // Get the most recent message (last in the list)
-          const lastMessageElement = messageElements[messageElements.length - 1] as HTMLElement;
+        // Scroll page to chatbot section
+        window.scrollTo({
+          top: containerTop - offset,
+          behavior: 'smooth'
+        });
+        
+        // Then scroll within the chatbot container to show most recent question at top
+        setTimeout(() => {
+          if (!desktopChatbotRef.current) return;
           
-          if (lastMessageElement) {
-            // Calculate position relative to the scrollable container
-            const containerTop = container.getBoundingClientRect().top;
-            const elementTop = lastMessageElement.getBoundingClientRect().top;
-            const elementTopRelativeToContainer = elementTop - containerTop;
-            const currentScrollTop = container.scrollTop;
+          const innerDiv = container.querySelector('div[style*="direction: ltr"]') as HTMLElement;
+          if (!innerDiv) return;
+          
+          const messageElements = innerDiv.querySelectorAll('[data-message-index]');
+          
+          if (messageElements.length > 0) {
+            // Get the most recent message (last in the list)
+            const lastMessageElement = messageElements[messageElements.length - 1] as HTMLElement;
             
-            // Scroll to position the most recent question at the top (with small padding)
-            const targetScrollTop = currentScrollTop + elementTopRelativeToContainer - 20;
-            
-            container.scrollTo({
-              top: Math.max(0, targetScrollTop),
-              behavior: 'smooth'
-            });
+            if (lastMessageElement) {
+              // Calculate position relative to the scrollable container
+              const elementTop = lastMessageElement.getBoundingClientRect().top;
+              const containerTop = container.getBoundingClientRect().top;
+              const elementTopRelativeToContainer = elementTop - containerTop;
+              const currentScrollTop = container.scrollTop;
+              
+              // Scroll to position the most recent question at the top (with small padding)
+              const targetScrollTop = currentScrollTop + elementTopRelativeToContainer - 20;
+              
+              container.scrollTo({
+                top: Math.max(0, targetScrollTop),
+                behavior: 'smooth'
+              });
+            }
           }
-        }
+        }, 300); // Wait for page scroll to complete
       }, 150);
     }
   }, [messages, hasAskedQuestion]);
+
+  // Measure chatbot content height and adjust container size dynamically
+  useEffect(() => {
+    const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
+    if (!isDesktop || !desktopChatbotRef.current || !hasAskedQuestion) {
+      setIsChatbotContentSmall(true);
+      setChatbotContainerHeight(null);
+      setChatbotNeedsScrolling(false);
+      return;
+    }
+
+    const measureContent = () => {
+      if (!desktopChatbotRef.current) return;
+      
+      const container = desktopChatbotRef.current;
+      const innerDiv = container.querySelector('div[style*="direction: ltr"]') as HTMLElement;
+      
+      if (!innerDiv) return;
+      
+      // Measure the actual content height (scrollHeight)
+      const contentHeight = innerDiv.scrollHeight;
+      // Threshold: if content is less than 400px, consider it small
+      const threshold = 400;
+      setIsChatbotContentSmall(contentHeight < threshold);
+      
+      // Dynamic container sizing:
+      // - If content is less than 600px, set container height to match content exactly
+      // - If content is 600px or more, set container height to 600px and enable scrolling
+      const maxHeight = 600;
+      let dynamicHeight: number;
+      
+      if (contentHeight < maxHeight) {
+        // Content doesn't fill container - set height to match content
+        dynamicHeight = contentHeight;
+      } else {
+        // Content fills or exceeds container - keep at max height
+        dynamicHeight = maxHeight;
+      }
+      
+      setChatbotContainerHeight(dynamicHeight);
+      
+      // Enable scrolling only if content actually exceeds the container height
+      setChatbotNeedsScrolling(contentHeight > dynamicHeight);
+    };
+
+    // Measure immediately
+    measureContent();
+
+    // Also measure after a short delay to account for any animations/rendering
+    const timeoutId = setTimeout(measureContent, 100);
+    
+    // Use ResizeObserver to watch for content changes
+    const innerDiv = desktopChatbotRef.current.querySelector('div[style*="direction: ltr"]') as HTMLElement;
+    if (innerDiv) {
+      const resizeObserver = new ResizeObserver(() => {
+        measureContent();
+      });
+      resizeObserver.observe(innerDiv);
+      
+      return () => {
+        clearTimeout(timeoutId);
+        resizeObserver.disconnect();
+      };
+    }
+    
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [messages, hasAskedQuestion, isLoading]);
 
   useEffect(() => {
     // Scroll the left box - show most recent question (both mobile and desktop)
@@ -2708,7 +2821,7 @@ export default function Home() {
                   {/* Chatbot Conversation with Cartoon */}
                   <div className="flex items-start gap-8">
                     {/* Chatbot Conversation */}
-                    <div className="flex-1 max-w-2xl">
+                    <div className="flex-1 max-w-3xl">
                       <div className="flex items-center gap-3 mb-6">
                         <div className="w-1 h-8 bg-gradient-to-b from-primary to-accent rounded-full"></div>
                         <div>
@@ -2718,13 +2831,15 @@ export default function Home() {
                       </div>
                     <div 
                       ref={desktopChatbotRef} 
-                      className="max-h-[600px] overflow-y-auto scrollbar-thin pr-2"
+                      className="scrollbar-thin pr-2 transition-all duration-300"
                       style={{ 
                         scrollbarWidth: 'thin', 
                         overflowX: 'hidden', 
-                        overflowY: 'auto',
+                        overflowY: chatbotNeedsScrolling ? 'auto' : 'hidden',
                         direction: 'rtl',
-                        paddingBottom: '0'
+                        paddingBottom: '0',
+                        height: chatbotContainerHeight ? `${chatbotContainerHeight}px` : 'auto',
+                        maxHeight: chatbotContainerHeight ? `${chatbotContainerHeight}px` : '600px'
                       }}
                     >
                       <div style={{ direction: 'ltr' }}>
@@ -2755,7 +2870,7 @@ export default function Home() {
                             );
 
                             return (
-                              <div key={displayIndex} className="mb-3" data-message-index={displayIndex}>
+                              <div key={displayIndex} className="mb-3 last:mb-0" data-message-index={displayIndex}>
                                 {/* User Message */}
                                 <div className="flex items-start gap-3 mb-5">
                                   <div className="flex-shrink-0 w-9 h-9 rounded-full bg-gradient-to-r from-teal-600 to-cyan-600 flex items-center justify-center shadow-md ring-2 ring-teal-100">
@@ -2764,7 +2879,7 @@ export default function Home() {
                                     </svg>
                                   </div>
                                   <div className="bg-gradient-to-r from-teal-600 to-cyan-600 text-white rounded-2xl p-4 px-5 shadow-md flex-1 transition-all duration-200 min-w-0 overflow-hidden">
-                                    <p className="whitespace-pre-wrap text-[15px] font-medium leading-relaxed break-words overflow-wrap-anywhere">{message.content}</p>
+                                    <p className="whitespace-pre-wrap text-[15px] lg:text-[17px] font-medium leading-relaxed break-words overflow-wrap-anywhere">{message.content}</p>
                                   </div>
                                 </div>
                                 
@@ -2780,7 +2895,7 @@ export default function Home() {
                                       <div className="flex-1 bg-blue-50 rounded-2xl p-5 shadow-sm border border-blue-100 transition-all duration-200 min-w-0 overflow-hidden">
                                         <div className="flex items-start gap-3 mb-4">
                                           <span className="text-2xl flex-shrink-0">💡</span>
-                                          <p className="text-[15px] text-slate-700 leading-relaxed font-medium break-words">
+                                        <p className="text-[15px] lg:text-[17px] text-slate-700 leading-relaxed font-medium break-words">
                                             Let me help you find the right card. Try asking about specific features like:
                                           </p>
                                         </div>
@@ -2803,7 +2918,7 @@ export default function Home() {
                                       </div>
                                     ) : (
                                       <div className="bg-white rounded-2xl pt-5 px-5 pb-4 shadow-sm border border-slate-200/60 flex-1 transition-all duration-200 min-w-0 overflow-hidden">
-                                        <div className="prose prose-sm max-w-none overflow-x-hidden">
+                                      <div className="prose prose-sm lg:prose-base max-w-none overflow-x-hidden">
                                           <ReactMarkdown
                                             components={{
                                               a: ({ ...props }) => (
@@ -2815,13 +2930,13 @@ export default function Home() {
                                                 />
                                               ),
                                               p: ({ ...props }) => (
-                                                <p className="mb-2 text-[15px] leading-[1.7] text-slate-700 break-words last:mb-0" {...props} />
+                                                <p className="mb-2 text-[15px] lg:text-[17px] leading-[1.7] text-slate-700 break-words last:mb-0" {...props} />
                                               ),
                                               ul: ({ ...props }) => (
                                                 <ul className="list-none space-y-2.5 my-2 last:mb-0" {...props} />
                                               ),
                                               li: ({ ...props }) => (
-                                                <li className="mb-2 text-[15px] leading-[1.7] text-slate-700 break-words last:mb-0" {...props} />
+                                                <li className="mb-2 text-[15px] lg:text-[17px] leading-[1.7] text-slate-700 break-words last:mb-0" {...props} />
                                               ),
                                             }}
                                           >
@@ -2832,9 +2947,15 @@ export default function Home() {
                                               
                                               if (message.recommendations && message.recommendations.length > 0) {
                                                 const summaryLower = displayText.toLowerCase();
+                                                const summaryNormalized = normalizeText(displayText);
                                                 const missingCards = message.recommendations.filter(rec => {
                                                   const cardNameLower = rec.credit_card_name.toLowerCase();
-                                                  return !summaryLower.includes(cardNameLower);
+                                                  const reasonLower = (rec.reason || '').toLowerCase();
+                                                  const reasonNormalized = normalizeText(rec.reason || '');
+                                                  const reasonDuplicate =
+                                                    (reasonLower && summaryLower.includes(reasonLower)) ||
+                                                    (reasonNormalized && summaryNormalized.includes(reasonNormalized));
+                                                  return !summaryLower.includes(cardNameLower) && !reasonDuplicate;
                                                 });
                                                 
                                                 if (missingCards.length > 0) {
@@ -2845,6 +2966,7 @@ export default function Home() {
                                                 }
                                               }
                                               
+                                              displayText = removeDuplicateFinalSentence(displayText);
                                               return displayText;
                                             })()}
                                           </ReactMarkdown>
@@ -2860,6 +2982,100 @@ export default function Home() {
                         {isLoading && (
                           <div className="mb-8">
                             <SwipeToLoad />
+                          </div>
+                        )}
+                        
+                        {/* Recommended Cards Section - At the bottom of the last response */}
+                        {latestRecommendations.length > 0 && !isLoading && (
+                          <div className={`${userConversationMessages.length === 1 ? 'lg:pt-2 pt-6' : 'pt-6'} border-t border-slate-200/60 lg:max-w-xl lg:mx-auto`}>
+                            <div className="space-y-3">
+                              {latestRecommendations.slice(0, 3).map((rec, index) => {
+                                const isExpanded = desktopExpandedRecommendations.has(index);
+                                  const benefits = extractBenefits(rec);
+                                  return (
+                                    <div
+                                      key={`${rec.credit_card_name}-${index}-recommended`}
+                                      className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-white to-slate-50/50 shadow-md hover:shadow-lg hover:border-primary/30 overflow-hidden transition-all duration-300 group"
+                                    >
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setDesktopExpandedRecommendations((prev) => {
+                                            const next = new Set(prev);
+                                            if (next.has(index)) {
+                                              next.delete(index);
+                                            } else {
+                                              next.add(index);
+                                            }
+                                            return next;
+                                          });
+                                        }}
+                                        className="w-full flex items-center gap-6 px-6 py-6 text-left hover:bg-slate-50/50 transition-colors"
+                                        aria-expanded={isExpanded}
+                                      >
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center gap-3 mb-2">
+                                            <p className="text-xl font-bold text-slate-900 group-hover:text-primary transition-colors">{rec.credit_card_name}</p>
+                                            <div className="flex items-center gap-1 text-primary font-semibold bg-primary/10 px-2 py-1 rounded-lg">
+                                              <Star className="w-4 h-4 text-primary" fill="currentColor" />
+                                              <span className="text-sm">{getDerivedRating(index)}</span>
+                                            </div>
+                                          </div>
+                                          <p className="text-sm text-slate-600 leading-relaxed">{getRecommendationHighlight(rec)}</p>
+                                        </div>
+                                        <div className="flex-shrink-0">
+                                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${isExpanded ? 'bg-primary/10 text-primary rotate-180' : 'bg-slate-100 text-slate-500 group-hover:bg-primary/10 group-hover:text-primary'}`}>
+                                            <ChevronDown className="w-5 h-5 transition-transform" />
+                                          </div>
+                                        </div>
+                                      </button>
+                                      {isExpanded && (
+                                        <div className="px-6 pb-6 pt-2 space-y-5 border-t border-slate-100 bg-slate-50/30 animate-in slide-in-from-top-2 duration-200">
+                                          {benefits.length > 0 && (
+                                            <div className="space-y-3 pt-4">
+                                              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Key Benefits</p>
+                                              {benefits.map((benefit, idx) => (
+                                                <div key={idx} className="flex items-start gap-3">
+                                                  <div className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center mt-0.5">
+                                                    <Check className="w-3 h-3 text-primary" strokeWidth={3} />
+                                                  </div>
+                                                  <p className="text-sm text-slate-700 leading-relaxed flex-1">{benefit}</p>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                          <div className="flex flex-wrap gap-2 pt-2">
+                                            {rec.annual_fee && (
+                                              <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-slate-700 border border-slate-200 shadow-sm">
+                                                {rec.annual_fee}
+                                              </span>
+                                            )}
+                                            {rec.intro_offer && (
+                                              <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+                                                {rec.intro_offer}
+                                              </span>
+                                            )}
+                                            {rec.rewards_rate && (
+                                              <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent/10 text-accent border border-accent/20">
+                                                {rec.rewards_rate}
+                                              </span>
+                                            )}
+                                          </div>
+                                          <a
+                                            href={rec.apply_url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-primary to-primary/90 text-white px-6 py-3 text-sm font-semibold shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 hover:scale-105 active:scale-95 transition-all"
+                                          >
+                                            View Details
+                                            <ExternalLink className="w-4 h-4 ml-2" />
+                                          </a>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -2884,149 +3100,6 @@ export default function Home() {
                     )}
                   </div>
 
-                  {/* Recommended Cards Section - Directly below Conversation History */}
-                  <div className="-mt-2 pt-6 border-t border-slate-200/60 max-w-2xl">
-                    <div className="flex items-center gap-3 mb-6">
-                      <div className="w-1 h-8 bg-gradient-to-b from-primary to-accent rounded-full"></div>
-                      <div>
-                        <h3 className="text-2xl font-bold text-slate-900">Recommended Cards</h3>
-                        <p className="text-sm text-slate-500 mt-1">Premium suggestions tailored to your needs</p>
-                      </div>
-                    </div>
-                    <div className="space-y-3">
-                      {latestRecommendations.length > 0 ? (
-                        latestRecommendations.slice(0, 3).map((rec, index) => {
-                          const isExpanded = desktopExpandedRecommendations.has(index);
-                          const benefits = extractBenefits(rec);
-                          return (
-                            <div
-                              key={`${rec.credit_card_name}-${index}-recommended`}
-                              className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-white to-slate-50/50 shadow-md hover:shadow-lg hover:border-primary/30 overflow-hidden transition-all duration-300 group"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setDesktopExpandedRecommendations((prev) => {
-                                    const next = new Set(prev);
-                                    if (next.has(index)) {
-                                      next.delete(index);
-                                    } else {
-                                      next.add(index);
-                                    }
-                                    return next;
-                                  });
-                                }}
-                                className="w-full flex items-center gap-6 px-6 py-6 text-left hover:bg-slate-50/50 transition-colors"
-                                aria-expanded={isExpanded}
-                              >
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-3 mb-2">
-                                    <p className="text-xl font-bold text-slate-900 group-hover:text-primary transition-colors">{rec.credit_card_name}</p>
-                                    <div className="flex items-center gap-1 text-primary font-semibold bg-primary/10 px-2 py-1 rounded-lg">
-                                      <Star className="w-4 h-4 text-primary" fill="currentColor" />
-                                      <span className="text-sm">{getDerivedRating(index)}</span>
-                                    </div>
-                                  </div>
-                                  <p className="text-sm text-slate-600 leading-relaxed">{getRecommendationHighlight(rec)}</p>
-                                </div>
-                                <div className="flex-shrink-0">
-                                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${isExpanded ? 'bg-primary/10 text-primary rotate-180' : 'bg-slate-100 text-slate-500 group-hover:bg-primary/10 group-hover:text-primary'}`}>
-                                    <ChevronDown className="w-5 h-5 transition-transform" />
-                                  </div>
-                                </div>
-                              </button>
-                              {isExpanded && (
-                                <div className="px-6 pb-6 pt-2 space-y-5 border-t border-slate-100 bg-slate-50/30 animate-in slide-in-from-top-2 duration-200">
-                                  {benefits.length > 0 && (
-                                    <div className="space-y-3 pt-4">
-                                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Key Benefits</p>
-                                      {benefits.map((benefit, idx) => (
-                                        <div key={idx} className="flex items-start gap-3">
-                                          <div className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center mt-0.5">
-                                            <Check className="w-3 h-3 text-primary" strokeWidth={3} />
-                                          </div>
-                                          <p className="text-sm text-slate-700 leading-relaxed flex-1">{benefit}</p>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                  <div className="flex flex-wrap gap-2 pt-2">
-                                    {rec.annual_fee && (
-                                      <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-slate-700 border border-slate-200 shadow-sm">
-                                        {rec.annual_fee}
-                                      </span>
-                                    )}
-                                    {rec.intro_offer && (
-                                      <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
-                                        {rec.intro_offer}
-                                      </span>
-                                    )}
-                                    {rec.rewards_rate && (
-                                      <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent/10 text-accent border border-accent/20">
-                                        {rec.rewards_rate}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <a
-                                    href={rec.apply_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-primary to-primary/90 text-white px-6 py-3 text-sm font-semibold shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 hover:scale-105 active:scale-95 transition-all"
-                                  >
-                                    View Details
-                                    <ExternalLink className="w-4 h-4 ml-2" />
-                                  </a>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <div className="rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50/50 px-6 py-12 text-center">
-                          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
-                            <Sparkles className="w-8 h-8 text-primary" />
-                          </div>
-                          <p className="text-base text-slate-600 font-medium">Your personalized card lineup will appear here after I finish analyzing your preferences.</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Desktop: Dynamic Suggested Questions - Below Recommended Cards */}
-                  {dynamicSuggestions.length > 0 && messages.length > 0 && !isLoading && (
-                    <div className="mt-4 pt-4 border-t border-slate-200/60">
-                      <p className="text-xs text-slate-500 mb-4 font-semibold uppercase tracking-wider">You might also ask</p>
-                      <div className="flex flex-row gap-4">
-                        {dynamicSuggestions.slice(0, 3).map((suggestion, index) => (
-                          <button
-                            key={index}
-                            onClick={() => handleSuggestedQuestion(suggestion)}
-                            disabled={isLoading}
-                            className="bg-white rounded-xl p-3 border border-slate-200 hover:border-teal-400 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 min-h-[140px] max-w-[200px] flex flex-col disabled:opacity-50 disabled:cursor-not-allowed group focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2"
-                          >
-                            <div className="flex flex-col items-center text-center space-y-2.5 flex-1 justify-center">
-                              <div className="rounded-full bg-teal-50 p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center group-hover:bg-teal-100 transition-colors">
-                                <span className="text-xl group-hover:scale-110 transition-transform">{getSuggestionIcon(suggestion)}</span>
-                              </div>
-                              <h3 className="font-medium text-xs text-slate-700 leading-snug px-1.5 line-clamp-3">
-                                {(() => {
-                                  // Fix question mark positioning: move question marks from before words to the end
-                                  let fixed = suggestion;
-                                  // Remove question marks that appear before word characters
-                                  fixed = fixed.replace(/\?(\w)/g, '$1');
-                                  // Add question mark at the end if the text doesn't already end with punctuation
-                                  if (!fixed.match(/[?.!]$/)) {
-                                    fixed = fixed + '?';
-                                  }
-                                  return fixed;
-                                })()}
-                              </h3>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
@@ -3173,7 +3246,7 @@ export default function Home() {
                               </svg>
                             </div>
                             <div className="bg-gradient-to-r from-teal-600 to-cyan-600 text-white rounded-2xl p-4 px-5 shadow-md flex-1 transition-all duration-200 min-w-0 overflow-hidden max-w-[72.25%]">
-                              <p className="whitespace-pre-wrap text-[15px] font-medium leading-relaxed break-words overflow-wrap-anywhere">{message.content}</p>
+                              <p className="whitespace-pre-wrap text-[15px] lg:text-[17px] font-medium leading-relaxed break-words overflow-wrap-anywhere">{message.content}</p>
                             </div>
                           </div>
                           
@@ -3189,7 +3262,7 @@ export default function Home() {
                                 <div className="flex-1 bg-blue-50 rounded-2xl p-5 shadow-sm border border-blue-100 transition-all duration-200 min-w-0 overflow-hidden max-w-[72.25%]">
                                   <div className="flex items-start gap-3 mb-4">
                                     <span className="text-2xl flex-shrink-0">💡</span>
-                                    <p className="text-[15px] text-slate-700 leading-relaxed font-medium break-words">
+                                    <p className="text-[15px] lg:text-[17px] text-slate-700 leading-relaxed font-medium break-words">
                                       Let me help you find the right card. Try asking about specific features like:
                                     </p>
                                   </div>
@@ -3233,13 +3306,19 @@ export default function Home() {
                                           <h3 className="text-base font-semibold text-slate-900 mt-3 mb-2" {...props} />
                                         ),
                                         p: ({ ...props }) => (
-                                          <p className="mb-3 text-[15px] leading-[1.7] text-slate-700 break-words" {...props} />
+                                        <p className="mb-3 text-[15px] lg:text-[17px] leading-[1.7] text-slate-700 break-words" {...props} />
                                         ),
                                         ul: ({ ...props }) => (
-                                          <ul className="list-none space-y-2.5 my-3" {...props} />
+                                          <ul
+                                            className="list-disc pl-5 lg:pl-8 space-y-2.5 my-3 text-slate-700 marker:text-teal-500"
+                                            {...props}
+                                          />
                                         ),
                                         li: ({ ...props }) => (
-                                          <li className="mb-3 text-[15px] leading-[1.7] text-slate-700 break-words" {...props} />
+                                          <li
+                                            className="mb-3 text-[15px] lg:text-[17px] leading-[1.7] text-slate-700 break-words pl-1 lg:pl-4"
+                                            {...props}
+                                          />
                                         ),
                                       }}
                                     >
@@ -3249,12 +3328,17 @@ export default function Home() {
                                           ? processMarkdownSummary(message.summary, message.recommendations)
                                           : message.summary;
                                         
-                                        // If we have recommendations but they're not in the summary, append them
                                         if (message.recommendations && message.recommendations.length > 0) {
                                           const summaryLower = displayText.toLowerCase();
+                                          const summaryNormalized = normalizeText(displayText);
                                           const missingCards = message.recommendations.filter(rec => {
                                             const cardNameLower = rec.credit_card_name.toLowerCase();
-                                            return !summaryLower.includes(cardNameLower);
+                                            const reasonLower = (rec.reason || '').toLowerCase();
+                                            const reasonNormalized = normalizeText(rec.reason || '');
+                                            const reasonDuplicate =
+                                              (reasonLower && summaryLower.includes(reasonLower)) ||
+                                              (reasonNormalized && summaryNormalized.includes(reasonNormalized));
+                                            return !summaryLower.includes(cardNameLower) && !reasonDuplicate;
                                           });
                                           
                                           if (missingCards.length > 0) {
@@ -3265,6 +3349,7 @@ export default function Home() {
                                           }
                                         }
                                         
+                                        displayText = removeDuplicateFinalSentence(displayText);
                                         return displayText;
                                       })()}
                                     </ReactMarkdown>
@@ -3338,7 +3423,7 @@ export default function Home() {
                           </div>
                           <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200/60 max-w-[30.6rem]">
                             <div className="flex items-center gap-2">
-                              <span className="text-slate-600 text-[15px] font-medium">Thinking</span>
+                              <span className="text-slate-600 text-[15px] lg:text-[17px] font-medium">Thinking</span>
                               <div className="flex gap-1.5">
                                 <div className="w-2 h-2 bg-teal-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
                                 <div className="w-2 h-2 bg-teal-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
@@ -3447,7 +3532,47 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Mobile: Dynamic Suggested Questions - After recommendation cards */}
+                  {/* Desktop: Dynamic Suggested Questions - Under chatbot window */}
+                  {dynamicSuggestions.length > 0 && messages.length > 0 && !isLoading && (
+                    <div className="hidden lg:block mt-6 pt-6 border-t border-slate-200/60">
+                      <div className="flex items-center justify-between mb-4">
+                        <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">
+                          You might also ask
+                        </p>
+                        <span className="text-xs text-slate-400">Click a suggestion to auto-fill</span>
+                      </div>
+                      <div className="flex flex-row gap-4">
+                        {dynamicSuggestions.slice(0, 3).map((suggestion, index) => (
+                          <button
+                            key={index}
+                            onClick={() => handleSuggestedQuestion(suggestion)}
+                            disabled={isLoading}
+                            className="bg-white rounded-2xl p-4 border border-slate-200 hover:border-teal-400 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 min-h-[140px] max-w-[220px] flex flex-col disabled:opacity-50 disabled:cursor-not-allowed group focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2"
+                          >
+                            <div className="flex flex-col items-center text-center space-y-3 flex-1 justify-center">
+                              <div className="rounded-full bg-teal-50 p-3 min-w-[48px] min-h-[48px] flex items-center justify-center group-hover:bg-teal-100 transition-colors">
+                                <span className="text-2xl group-hover:scale-110 transition-transform">
+                                  {getSuggestionIcon(suggestion)}
+                                </span>
+                              </div>
+                              <h3 className="font-semibold text-sm text-slate-700 leading-snug px-2 line-clamp-3">
+                                {(() => {
+                                  let fixed = suggestion;
+                                  fixed = fixed.replace(/\?(\w)/g, '$1');
+                                  if (!fixed.match(/[?.!]$/)) {
+                                    fixed = fixed + '?';
+                                  }
+                                  return fixed;
+                                })()}
+                              </h3>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Mobile: Dynamic Suggested Questions - After recommendation cards */}
               {dynamicSuggestions.length > 0 && messages.length > 0 && !isLoading && (
                 <div className="lg:hidden border-t border-slate-200 max-w-sm" style={{ marginTop: '3rem', paddingTop: '1rem' }}>
                   <p className="text-xs md:text-sm text-slate-500 mb-4 font-semibold uppercase tracking-wide">You might also ask:</p>
@@ -3907,26 +4032,66 @@ export default function Home() {
 
       {/* Fixed Chatbot Input at Bottom - Desktop Only */}
       {hasAskedQuestion && (
-        <div className="hidden lg:block fixed bottom-0 left-0 right-0 z-50 bg-transparent border-t border-slate-200/40">
-          <div className="max-w-7xl mx-auto px-6 py-4">
-            <div className="flex items-center gap-4">
-              <div className="flex-1 relative">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  placeholder="Ask about credit cards..."
-                  className="w-full h-14 rounded-2xl border-2 border-slate-200 bg-white px-6 pr-16 text-base text-slate-900 placeholder:text-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all"
-                />
-                <button
-                  onClick={handleSend}
-                  disabled={isLoading || !input.trim()}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 w-12 h-12 rounded-xl bg-gradient-to-r from-primary to-primary/90 text-white flex items-center justify-center shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 hover:scale-105 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 transition-all"
-                >
-                  <Send className="w-5 h-5" />
-                </button>
+        <div className="hidden lg:block fixed bottom-0 left-0 right-0 z-50 bg-gradient-to-t from-primary/15 via-white/80 to-transparent border-t border-primary/15 backdrop-blur-sm">
+          <div className="max-w-[1100px] mx-auto px-4 py-4 transition-all duration-300">
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-3">
+                <div className="flex-1 relative">
+                  <input
+                    type="text"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    placeholder="Ask about credit cards..."
+                    className={`w-full h-14 rounded-xl border px-5 pr-16 text-base text-slate-900 placeholder:text-slate-400 shadow-md transition-all ${
+                      input.trim() 
+                        ? 'border-primary/40 bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary' 
+                        : 'border-primary/30 bg-gradient-to-r from-white to-primary/5 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary shadow-primary/10'
+                    }`}
+                  />
+                  <button
+                    onClick={handleSend}
+                    disabled={isLoading || !input.trim()}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 w-12 h-12 rounded-lg bg-gradient-to-r from-primary to-primary/90 text-white flex items-center justify-center shadow-md shadow-primary/20 hover:shadow-lg hover:shadow-primary/30 hover:scale-105 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 transition-all"
+                  >
+                    <Send className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
+
+              {dynamicSuggestions.length > 0 && messages.length > 0 && !isLoading && (
+                <div className="rounded-xl border border-white/60 bg-white/80 px-4 py-3 shadow-md shadow-primary/10 backdrop-blur">
+                  <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">You might also ask</p>
+                    <span className="text-[10px] text-slate-400">Click to autofill</span>
+                  </div>
+                  <div className="flex flex-row gap-3 w-full">
+                    {dynamicSuggestions.slice(0, 3).map((suggestion, index) => (
+                      <button
+                        key={index}
+                        onClick={() => handleSuggestedQuestion(suggestion)}
+                        disabled={isLoading}
+                        className="flex-1 min-w-0 flex items-center gap-3 px-3 py-2.5 rounded-xl border border-slate-200/70 bg-white/70 text-left shadow-sm hover:shadow-md hover:border-teal-400 hover:scale-[1.01] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2"
+                        aria-label={`Ask: ${suggestion}`}
+                      >
+                        <div className="rounded-full bg-teal-50 p-1.5 min-w-[36px] min-h-[36px] flex items-center justify-center text-base">
+                          <span>{getSuggestionIcon(suggestion)}</span>
+                        </div>
+                        <span className="text-sm font-medium text-slate-700 leading-snug">
+                          {(() => {
+                            let fixed = suggestion;
+                            fixed = fixed.replace(/\?(\w)/g, '$1');
+                            if (!fixed.match(/[?.!]$/)) {
+                              fixed = fixed + '?';
+                            }
+                            return fixed;
+                          })()}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
