@@ -39,6 +39,8 @@ export interface Recommendation {
   annual_fee?: string;
   rewards_rate?: string;
   perks?: string;
+  card_summary?: string; // Summary text displayed at the top of the expandable box
+  card_highlights?: string; // Highlights formatted as checkmarks in the body
 }
 
 /**

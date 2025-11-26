@@ -165,6 +165,65 @@ export default function Home() {
     return text;
   };
 
+  const normalizeMarkdownListItems = (text: string): string => {
+    if (!text) return text;
+    // Ensure each list item (starting with -) is on its own line
+    // This handles cases where multiple list items might be on the same line
+    let normalized = text;
+    
+    // Split text into lines
+    const lines = normalized.split('\n');
+    const processedLines: string[] = [];
+    
+    for (const line of lines) {
+      // Check if line contains multiple list items (starts with "-" but has another "-" later that's also a list item)
+      // Pattern: "- [Card](url) - desc - [Card](url) - desc"
+      // We want to split on "- " that appears after a description and before another card link
+      const listItemMatch = /-\s+\*\*\[([^\]]+)\]\([^)]+\)\*\*\s*-\s*/g;
+      const matches = Array.from(line.matchAll(listItemMatch));
+      
+      if (matches.length > 1) {
+        // Multiple list items on same line - split them
+        let lastIndex = 0;
+        matches.forEach((match, idx) => {
+          if (idx === 0 && match.index! > 0) {
+            // Add any text before the first list item
+            processedLines.push(line.substring(0, match.index!));
+          }
+          
+          // Find the end of this list item (start of next list item or end of line)
+          const start = match.index!;
+          const nextMatch = matches[idx + 1];
+          const end = nextMatch ? nextMatch.index! : line.length;
+          const listItem = line.substring(start, end).trim();
+          
+          if (listItem) {
+            processedLines.push(listItem);
+          }
+          lastIndex = end;
+        });
+        
+        // Add any remaining text after the last list item
+        if (lastIndex < line.length) {
+          const remaining = line.substring(lastIndex).trim();
+          if (remaining) {
+            processedLines.push(remaining);
+          }
+        }
+      } else {
+        processedLines.push(line);
+      }
+    }
+    
+    // Join and ensure double line breaks between list items for better separation
+    normalized = processedLines.join('\n');
+    
+    // Ensure proper spacing: if a list item is followed by another list item, add a blank line
+    normalized = normalized.replace(/(-\s+\*\*\[[^\]]+\]\([^)]+\)\*\*\s*-\s*[^\n]+)\n(?!\n)(-\s+\*\*\[)/g, '$1\n\n$2');
+    
+    return normalized;
+  };
+
   const getRecommendationHighlight = (rec: Recommendation) => {
     const highlight =
       rec.reason ||
@@ -1523,6 +1582,7 @@ export default function Home() {
       userHasScrolledLeftRef.current = false;
       // Collapse any expanded credit card info boxes (mobile + desktop) when a new question starts
       setOpenCardBoxes(new Set());
+      setExpandedRecommendations(new Set());
       setDesktopExpandedRecommendations(new Set());
       // Note: Left box scrolling is handled in the separate useEffect below
       prevMessageCountRef.current = currentMessageCount;
@@ -2707,18 +2767,24 @@ export default function Home() {
                     ? rightmostPosition 
                     : popularQuestionsCarouselScrollProgress * rightmostPosition;
                   
+                  // On mobile, when at the first question (scrollProgress is 0 or very close to 0),
+                  // hide the sliding bar and show only the active dot as blue to avoid multiple blue areas
+                  const isAtFirstQuestion = popularQuestionsCarouselScrollProgress < 0.01 && activeDotIndex === 0;
+                  
                   return (
                     <>
-                      {/* Sliding indicator bar */}
-                      <div 
-                        className="absolute h-2 bg-primary rounded-full transition-all duration-75 ease-out"
-                        style={{
-                          width: '1.5rem',
-                          left: `${barPosition}rem`,
-                          top: '0',
-                          transform: 'translateY(0)'
-                        }}
-                      />
+                      {/* Sliding indicator bar - hide when at first question to show only one blue dot */}
+                      {!isAtFirstQuestion && (
+                        <div 
+                          className="absolute h-2 bg-primary rounded-full transition-all duration-75 ease-out"
+                          style={{
+                            width: '1.5rem',
+                            left: `${barPosition}rem`,
+                            top: '0',
+                            transform: 'translateY(0)'
+                          }}
+                        />
+                      )}
                       {dotIndices.map((itemIndex) => {
                         const isActive = itemIndex === activeDotIndex;
                         
@@ -2737,7 +2803,7 @@ export default function Home() {
                               }
                             }}
                             className={`w-2 h-2 rounded-full transition-all duration-200 relative z-10 ${
-                              isActive ? 'bg-slate-300 w-2' : 'bg-slate-300'
+                              isActive ? 'bg-primary w-2' : 'bg-slate-300'
                             }`}
                             aria-label={`Go to slide ${itemIndex + 1}`}
                           />
@@ -2922,7 +2988,7 @@ export default function Home() {
                                       </div>
                                     ) : (
                                       <div className="bg-white rounded-2xl pt-5 px-5 pb-4 shadow-sm border border-slate-200/60 flex-1 transition-all duration-200 min-w-0 overflow-hidden">
-                                      <div className="prose prose-sm lg:prose-base max-w-none overflow-x-hidden">
+                                      <div className="prose prose-sm lg:prose-base max-w-none overflow-x-hidden prose-li:my-0">
                                           <ReactMarkdown
                                             components={{
                                               a: ({ ...props }) => (
@@ -2930,17 +2996,17 @@ export default function Home() {
                                                   {...props} 
                                                   target="_blank" 
                                                   rel="noopener noreferrer"
-                                                  className="text-teal-600 font-semibold hover:text-teal-700 underline decoration-2 decoration-teal-300 hover:decoration-teal-500 transition-colors duration-200"
+                                                  className="text-teal-600 font-semibold hover:text-teal-700 underline decoration-2 decoration-teal-300 hover:decoration-teal-500 transition-colors duration-200 break-words"
                                                 />
                                               ),
                                               p: ({ ...props }) => (
                                                 <p className="mb-2 text-[15px] lg:text-[17px] leading-[1.7] text-slate-700 break-words last:mb-0" {...props} />
                                               ),
                                               ul: ({ ...props }) => (
-                                                <ul className="list-none space-y-2.5 my-2 last:mb-0" {...props} />
+                                                <ul className="list-none space-y-2.5 lg:space-y-4 my-2 last:mb-0 [&>li]:block [&>li]:w-full" {...props} />
                                               ),
                                               li: ({ ...props }) => (
-                                                <li className="mb-2 text-[15px] lg:text-[17px] leading-[1.7] text-slate-700 break-words last:mb-0" {...props} />
+                                                <li className="mb-2 lg:mb-4 block w-full text-[15px] lg:text-[17px] leading-[1.7] text-slate-700 break-words last:mb-0 whitespace-normal" style={{ display: 'block', clear: 'both', width: '100%' }} {...props} />
                                               ),
                                             }}
                                           >
@@ -2971,6 +3037,7 @@ export default function Home() {
                                               }
                                               
                                               displayText = removeDuplicateFinalSentence(displayText);
+                                              displayText = normalizeMarkdownListItems(displayText);
                                               return displayText;
                                             })()}
                                           </ReactMarkdown>
@@ -3025,7 +3092,7 @@ export default function Home() {
                                         aria-expanded={isExpanded}
                                       >
                                         <div className="flex-1 min-w-0">
-                                          <p className="text-lg md:text-base md:font-medium text-slate-900 md:text-card-foreground group-hover:text-primary transition-colors truncate">
+                                          <p className="text-lg md:text-xl md:font-medium text-slate-900 md:text-card-foreground group-hover:text-primary transition-colors truncate">
                                             {rec.credit_card_name}
                                           </p>
                                         </div>
@@ -3034,38 +3101,42 @@ export default function Home() {
                                         </div>
                                       </button>
                                       {isExpanded && (
-                                        <div className="px-6 pb-6 pt-2 space-y-5 border-t border-slate-100 bg-slate-50/30 animate-in slide-in-from-top-2 duration-200">
-                                          <div className="flex items-center gap-3 pt-4">
-                                            <div className="flex items-center gap-1 text-primary font-semibold bg-primary/10 px-2 py-1 rounded-lg">
-                                              <Star className="w-4 h-4 text-primary" fill="currentColor" />
-                                              <span className="text-sm">{rating}</span>
-                                            </div>
-                                            <p className="text-sm text-slate-600 md:text-muted-foreground md:leading-relaxed flex-1">
-                                              {highlight}
-                                            </p>
-                                          </div>
-                                          {benefits.length > 0 && (
-                                            <div className="space-y-3 pt-4">
-                                              <p className="text-xs font-semibold text-slate-500 md:text-muted-foreground uppercase md:tracking-wider mb-2">Key Benefits</p>
-                                              {benefits.map((benefit, idx) => (
-                                                <div key={idx} className="flex items-start gap-3">
-                                                  <div className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center mt-0.5">
-                                                    <Check className="w-3 h-3 text-primary" strokeWidth={3} />
-                                                  </div>
-                                                  <p className="text-sm text-slate-700 md:text-muted-foreground md:leading-relaxed flex-1">{benefit}</p>
-                                                </div>
-                                              ))}
+                                        <div className="px-6 pb-6 pt-2 space-y-2 border-t border-slate-100 bg-slate-50/30 animate-in slide-in-from-top-2 duration-200">
+                                          {/* Card Summary at Top */}
+                                          {rec.card_summary && (
+                                            <div className="pt-2">
+                                              <p className="text-sm text-slate-600 md:text-muted-foreground md:leading-relaxed">
+                                                {rec.card_summary}
+                                              </p>
                                             </div>
                                           )}
-                                          <div className="flex flex-wrap gap-2 pt-2">
+                                          
+                                          {/* Card Highlights as Checkmarks */}
+                                          {rec.card_highlights && (
+                                            <div className="space-y-2 pt-1">
+                                              <p className="text-xs font-semibold text-slate-500 md:text-muted-foreground uppercase md:tracking-wider mb-1">Key Benefits</p>
+                                              {rec.card_highlights
+                                                .split('\n')
+                                                .map((highlight) => highlight.trim())
+                                                .filter((highlight) => highlight.length > 0)
+                                                .map((highlight, idx) => {
+                                                  // Remove bullet points (•, -, *, etc.) from the beginning of the text
+                                                  const cleanedHighlight = highlight.replace(/^[•\-\*\u2022\u2023\u25E6\u2043\u2219\s]+/, '').trim();
+                                                  return (
+                                                    <div key={idx} className="flex items-start gap-3">
+                                                      <div className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center mt-0.5">
+                                                        <Check className="w-3 h-3 text-primary" strokeWidth={3} />
+                                                      </div>
+                                                      <p className="text-sm text-slate-700 md:text-muted-foreground md:leading-relaxed flex-1">{cleanedHighlight}</p>
+                                                    </div>
+                                                  );
+                                                })}
+                                            </div>
+                                          )}
+                                          <div className="flex flex-wrap gap-2 pt-1">
                                             {rec.annual_fee && (
                                               <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-slate-700 border border-slate-200 shadow-sm">
                                                 {rec.annual_fee}
-                                              </span>
-                                            )}
-                                            {rec.intro_offer && (
-                                              <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
-                                                {rec.intro_offer}
                                               </span>
                                             )}
                                             {rec.rewards_rate && (
@@ -3324,13 +3395,14 @@ export default function Home() {
                                         ),
                                         ul: ({ ...props }) => (
                                           <ul
-                                            className="list-disc pl-5 lg:pl-8 space-y-2.5 my-3 text-slate-700 marker:text-teal-500"
+                                            className="list-disc pl-5 lg:pl-8 space-y-2.5 lg:space-y-4 my-3 text-slate-700 marker:text-teal-500 [&>li]:block [&>li]:w-full"
                                             {...props}
                                           />
                                         ),
                                         li: ({ ...props }) => (
                                           <li
-                                            className="mb-3 text-[15px] lg:text-[17px] leading-[1.7] text-slate-700 break-words pl-1 lg:pl-4"
+                                            className="mb-3 lg:mb-4 block w-full text-[15px] lg:text-[17px] leading-[1.7] text-slate-700 break-words pl-1 lg:pl-4 whitespace-normal"
+                                            style={{ display: 'block', clear: 'both', width: '100%' }}
                                             {...props}
                                           />
                                         ),
@@ -3364,6 +3436,7 @@ export default function Home() {
                                         }
                                         
                                         displayText = removeDuplicateFinalSentence(displayText);
+                                        displayText = normalizeMarkdownListItems(displayText);
                                         return displayText;
                                       })()}
                                     </ReactMarkdown>
@@ -3502,41 +3575,58 @@ export default function Home() {
                         
                         {/* Expanded Content */}
                         {isExpanded && (
-                          <div className="px-3 pb-3 pt-0 border-t border-slate-100">
-                            <div className="pt-3 space-y-2 text-sm">
-                              {/* Annual Fee */}
+                          <div className="px-6 pb-6 pt-2 space-y-2 border-t border-slate-100 bg-slate-50/30 animate-in slide-in-from-top-2 duration-200">
+                            {/* Card Summary at Top */}
+                            {rec.card_summary && (
+                              <div className="pt-2">
+                                <p className="text-sm text-slate-600 md:text-muted-foreground md:leading-relaxed">
+                                  {rec.card_summary}
+                                </p>
+                              </div>
+                            )}
+                            
+                            {/* Card Highlights as Checkmarks */}
+                            {rec.card_highlights && (
+                              <div className="space-y-2 pt-1">
+                                <p className="text-xs font-semibold text-slate-500 md:text-muted-foreground uppercase md:tracking-wider mb-1">Key Benefits</p>
+                                {rec.card_highlights
+                                  .split('\n')
+                                  .map((highlight) => highlight.trim())
+                                  .filter((highlight) => highlight.length > 0)
+                                  .map((highlight, idx) => {
+                                    // Remove bullet points (•, -, *, etc.) from the beginning of the text
+                                    const cleanedHighlight = highlight.replace(/^[•\-\*\u2022\u2023\u25E6\u2043\u2219\s]+/, '').trim();
+                                    return (
+                                      <div key={idx} className="flex items-start gap-3">
+                                        <div className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center mt-0.5">
+                                          <Check className="w-3 h-3 text-primary" strokeWidth={3} />
+                                        </div>
+                                        <p className="text-sm text-slate-700 md:text-muted-foreground md:leading-relaxed flex-1">{cleanedHighlight}</p>
+                                      </div>
+                                    );
+                                  })}
+                              </div>
+                            )}
+                            <div className="flex flex-wrap gap-2 pt-1">
                               {rec.annual_fee && (
-                                <div className="flex justify-between items-start gap-2">
-                                  <span className="font-medium text-slate-500">Annual Fee:</span>
-                                  <span className="text-slate-700 font-medium text-right">{rec.annual_fee}</span>
-                                </div>
+                                <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-slate-700 border border-slate-200 shadow-sm">
+                                  {rec.annual_fee}
+                                </span>
                               )}
-                              
-                              {/* Intro Offer */}
-                              {rec.intro_offer && (
-                                <div className="flex justify-between items-start gap-2">
-                                  <span className="font-medium text-slate-500">Intro Offer:</span>
-                                  <span className="text-slate-700 font-medium text-right">{rec.intro_offer}</span>
-                                </div>
-                              )}
-                              
-                              {/* Perks */}
-                              {rec.perks && (
-                                <div className="flex justify-between items-start gap-2">
-                                  <span className="font-medium text-slate-500">Perks:</span>
-                                  <span className="text-slate-700 font-medium text-right">{rec.perks}</span>
-                                </div>
+                              {rec.rewards_rate && (
+                                <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent/10 text-accent border border-accent/20">
+                                  {rec.rewards_rate}
+                                </span>
                               )}
                             </div>
-                            
-                            {/* Apply Button */}
                             <a
                               href={rec.apply_url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="mt-3 block w-full bg-gradient-to-r from-teal-600 to-cyan-600 text-white rounded-lg text-sm font-semibold py-2.5 text-center hover:from-teal-700 hover:to-cyan-700 transition-all duration-200 active:scale-95"
+                              className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-primary to-primary/90 text-white px-6 py-3 text-sm font-semibold shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 hover:scale-105 active:scale-95 transition-all w-full"
                             >
-                              Apply Now
+                              View Details
+                              <ExternalLink className="w-4 h-4 ml-2" />
                             </a>
                           </div>
                         )}
@@ -3947,41 +4037,59 @@ export default function Home() {
                               
                               {/* Collapsible Content */}
                               {isOpen && (
-                                <div className="px-4 pb-4 space-y-4 animate-in slide-in-from-top-2 duration-200">
-                                  {/* Benefits Section */}
-                                  {benefits.length > 0 && (
-                                    <div className="space-y-2">
-                                      {benefits.map((benefit, idx) => (
-                                        <div key={idx} className="flex items-start gap-2">
-                                          <Check className="w-4 h-4 text-success flex-shrink-0 mt-0.5" />
-                                          <p className="text-sm text-foreground leading-relaxed">{benefit}</p>
-                                        </div>
-                                      ))}
+                                <div className="px-4 pb-4 pt-2 space-y-2 animate-in slide-in-from-top-2 duration-200">
+                                  {/* Card Summary at Top */}
+                                  {rec.card_summary && (
+                                    <div className="pt-2">
+                                      <p className="text-sm text-slate-600 md:text-muted-foreground md:leading-relaxed">
+                                        {rec.card_summary}
+                                      </p>
                                     </div>
                                   )}
                                   
-                                  {/* Footer Section */}
-                                  <div className="border-t border-border pt-4 space-y-3">
-                                    {/* Badges */}
-                                    <div className="flex flex-wrap gap-2">
-                                      {rec.annual_fee && (
-                                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-secondary text-secondary-foreground">
-                                          {rec.annual_fee}
-                                        </span>
-                                      )}
+                                  {/* Card Highlights as Checkmarks */}
+                                  {rec.card_highlights && (
+                                    <div className="space-y-2 pt-1">
+                                      <p className="text-xs font-semibold text-slate-500 md:text-muted-foreground uppercase md:tracking-wider mb-1">Key Benefits</p>
+                                      {rec.card_highlights
+                                        .split('\n')
+                                        .map((highlight) => highlight.trim())
+                                        .filter((highlight) => highlight.length > 0)
+                                        .map((highlight, idx) => {
+                                          // Remove bullet points (•, -, *, etc.) from the beginning of the text
+                                          const cleanedHighlight = highlight.replace(/^[•\-\*\u2022\u2023\u25E6\u2043\u2219\s]+/, '').trim();
+                                          return (
+                                            <div key={idx} className="flex items-start gap-3">
+                                              <div className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center mt-0.5">
+                                                <Check className="w-3 h-3 text-primary" strokeWidth={3} />
+                                              </div>
+                                              <p className="text-sm text-slate-700 md:text-muted-foreground md:leading-relaxed flex-1">{cleanedHighlight}</p>
+                                            </div>
+                                          );
+                                        })}
                                     </div>
-                                    
-                                    {/* CTA Button */}
-                                    <a
-                                      href={rec.apply_url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="w-full flex items-center justify-center px-4 py-2.5 text-sm font-medium border border-border rounded-lg bg-transparent text-foreground hover:bg-primary hover:text-primary-foreground transition-all duration-300 hover:border-primary"
-                                    >
-                                      Learn More
-                                      <ExternalLink className="w-4 h-4 ml-2" />
-                                    </a>
+                                  )}
+                                  <div className="flex flex-wrap gap-2 pt-1">
+                                    {rec.annual_fee && (
+                                      <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-slate-700 border border-slate-200 shadow-sm">
+                                        {rec.annual_fee}
+                                      </span>
+                                    )}
+                                    {rec.rewards_rate && (
+                                      <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent/10 text-accent border border-accent/20">
+                                        {rec.rewards_rate}
+                                      </span>
+                                    )}
                                   </div>
+                                  <a
+                                    href={rec.apply_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-primary to-primary/90 text-white px-6 py-3 text-sm font-semibold shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 hover:scale-105 active:scale-95 transition-all w-full"
+                                  >
+                                    View Details
+                                    <ExternalLink className="w-4 h-4 ml-2" />
+                                  </a>
                                 </div>
                               )}
                             </div>

@@ -196,7 +196,8 @@ async function generateSpecificCardResponse(
     'rewards_rate', 'rewards', 'reward_rate',
     'credit_score_needed', 'credit_score', 'min_credit_score', 'credit_score_required',
     'target_consumer', 'points_multipliers', 'perks', 'benefits', 'card_perks',
-    'application_fee', 'app_fee', 'intro_apr', 'apr'
+    'application_fee', 'app_fee', 'intro_apr', 'apr',
+    'card_summary', 'card_highlights'
   ];
   
   for (const field of relevantFields) {
@@ -254,6 +255,9 @@ IMPORTANT: Include ALL relevant information about the card. Make it comprehensiv
       credit_card_name: response.card_name || cardData.credit_card_name,
       apply_url: response.apply_url || String(cardData.url_application || ''),
       reason: response.summary || `Information about ${cardData.credit_card_name}`,
+      // Pull from Google Sheet
+      card_summary: String(cardData.card_summary || '').trim(),
+      card_highlights: String(cardData.card_highlights || '').trim(),
       intro_offer: String(cardData.intro_offer || cardData.welcome_bonus || cardData.sign_up_bonus || cardData.intro_bonus || ''),
       application_fee: String(cardData.application_fee || cardData.app_fee || ''),
       credit_score_needed: String(cardData.credit_score_needed || cardData.credit_score || cardData.min_credit_score || cardData.credit_score_required || ''),
@@ -666,7 +670,8 @@ async function generateResponseAboutPreviousCards(
         'rewards_rate', 'rewards', 'reward_rate',
         'credit_score_needed', 'credit_score', 'min_credit_score', 'credit_score_required',
         'target_consumer', 'points_multipliers', 'perks', 'benefits', 'card_perks',
-        'application_fee', 'app_fee', 'intro_apr', 'apr'
+        'application_fee', 'app_fee', 'intro_apr', 'apr',
+        'card_summary', 'card_highlights'
       ];
       
       for (const field of relevantFields) {
@@ -859,8 +864,8 @@ export async function generateRecommendations(
 {
   "summary": "A well-structured markdown-formatted response with:\n1. Brief personalized opening (1 sentence) acknowledging the user's question\n2. Each card on a separate line as: - **Card Name** (as markdown link [Card Name](url)) - brief 1-2 sentence description\n3. Each card must be on its own line with a blank line between cards\n4. Brief closing (1 sentence) summarizing key takeaway\n\nUse markdown: **bold** for emphasis, proper line breaks, markdown list syntax (-), keep it conversational and warm. NO subheadings - go directly from opening sentence to list items. Each card MUST be on a separate line.",
   "cards": [
-    {"credit_card_name": "Exact card name from candidate cards", "apply_url": "URL from candidate cards", "reason": "Brief 1-2 sentence description of why this card fits"},
-    {"credit_card_name": "Another card name", "apply_url": "Another URL", "reason": "Brief description"}
+    {"credit_card_name": "Exact card name from candidate cards", "apply_url": "URL from candidate cards", "reason": "Brief 1-2 sentence description of why this card fits", "card_summary": "A concise 1-2 sentence summary of this card's key value proposition", "card_highlights": "Highlight 1\\nHighlight 2\\nHighlight 3"},
+    {"credit_card_name": "Another card name", "apply_url": "Another URL", "reason": "Brief description", "card_summary": "Summary text", "card_highlights": "Highlight 1\\nHighlight 2\\nHighlight 3"}
   ]
 }
 
@@ -906,6 +911,10 @@ Create a conversational, well-structured markdown response that:
 4. Ends with a brief closing (1 sentence only) summarizing key takeaway
 
 ALWAYS list ALL individual cards from your recommendations in the summary using the format above. Include both the card name and URL in the markdown link format. Each card MUST be on a separate line.
+
+For each card in the "cards" array, you MUST include:
+- "card_summary": A concise 1-2 sentence summary of the card's key value proposition
+- "card_highlights": A newline-separated list of 3-5 key highlights/benefits (one per line, no bullets or dashes)
 
 Then recommend exactly 3 cards (the best 3). Return JSON with the formatted markdown summary.`;
     
@@ -983,6 +992,9 @@ Then recommend exactly 3 cards (the best 3). Return JSON with the formatted mark
             credit_card_name: rec.credit_card_name,
             apply_url: rec.apply_url || String(card.url_application || ''),
             reason: rec.reason || '',
+            // Pull from Google Sheet first, fallback to LLM response if not in sheet
+            card_summary: String(card.card_summary || rec.card_summary || '').trim(),
+            card_highlights: String(card.card_highlights || rec.card_highlights || '').trim(),
             intro_offer: String(card.intro_offer || card.welcome_bonus || card.sign_up_bonus || card.intro_bonus || ''),
             application_fee: String(card.application_fee || card.app_fee || ''),
             credit_score_needed: String(card.credit_score_needed || card.credit_score || card.min_credit_score || card.credit_score_required || ''),
