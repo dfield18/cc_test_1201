@@ -247,6 +247,191 @@ export default function Home() {
     return cleaned;
   };
 
+  const removeDuplicateCardNames = (text: string, recommendations?: Recommendation[]): string => {
+    if (!text) return text;
+    let cleaned = text;
+    
+    // First, use recommendations to do direct string replacement for known card names
+    // This is the most reliable approach
+    if (recommendations && recommendations.length > 0) {
+      recommendations.forEach((rec) => {
+        const cardName = rec.credit_card_name;
+        // Escape special regex characters in card name
+        const escapedCardName = cardName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        
+        // Pattern 1: Handle "**\n\ncardName\n\n**cardName" - markdown bold with newlines then duplicate
+        const markdownNewlinePattern = new RegExp(`\\*\\*[\\s\\n]*(${escapedCardName})[\\s\\n]*\\*\\*\\s*\\1`, 'gi');
+        cleaned = cleaned.replace(markdownNewlinePattern, `**$1**`);
+        
+        // Pattern 2: Handle "**cardName**cardName" (same line, no newlines)
+        const markdownSameLinePattern = new RegExp(`\\*\\*(${escapedCardName})\\*\\*\\s*\\1`, 'gi');
+        cleaned = cleaned.replace(markdownSameLinePattern, `**$1**`);
+        
+        // Pattern 3: Handle card name followed by same card name with newlines in between
+        // This catches patterns like "cardName\n\ncardName" or "cardName\ncardName"
+        const newlineDuplicatePattern = new RegExp(`(${escapedCardName})[\\s\\n]+\\1([\\s\\n]*)`, 'gi');
+        cleaned = cleaned.replace(newlineDuplicatePattern, '$1$2');
+        
+        // Pattern 4: Handle card name on its own line appearing multiple times
+        // Match: newline(s), cardName, newline(s), cardName
+        const standaloneDuplicatePattern = new RegExp(`([\\s\\n]+)(${escapedCardName})([\\s\\n]+)\\2([\\s\\n]*)`, 'gi');
+        cleaned = cleaned.replace(standaloneDuplicatePattern, '$1$2$3');
+        
+        // Pattern 5: Card name followed by asterisks followed by same card name
+        const duplicatePattern1 = new RegExp(`(${escapedCardName})\\*{2,}\\1`, 'gi');
+        cleaned = cleaned.replace(duplicatePattern1, '$1');
+        
+        // Pattern 6: Card name with optional whitespace around asterisks
+        const duplicatePattern2 = new RegExp(`(${escapedCardName})\\s*\\*{2,}\\s*\\1`, 'gi');
+        cleaned = cleaned.replace(duplicatePattern2, '$1');
+        
+        // Pattern 7: Card name with any number of asterisks (1 or more)
+        const duplicatePattern3 = new RegExp(`(${escapedCardName})\\*+\\1`, 'gi');
+        cleaned = cleaned.replace(duplicatePattern3, '$1');
+        
+        // Pattern 8: Remove duplicate card name that appears right after "**cardName**"
+        // This handles: "**cardName**cardName" -> "**cardName**"
+        const afterMarkdownPattern = new RegExp(`\\*\\*${escapedCardName}\\*\\*\\s*${escapedCardName}`, 'gi');
+        cleaned = cleaned.replace(afterMarkdownPattern, `**${cardName}**`);
+        
+        // Pattern 9: Remove standalone card name that appears after it was already in markdown
+        // This handles: "**\n\ncardName\n\n**cardName\n\ncardName" -> keep only the one in markdown
+        const standaloneAfterMarkdown = new RegExp(`\\*\\*[\\s\\n]*${escapedCardName}[\\s\\n]*\\*\\*[\\s\\n]*${escapedCardName}`, 'gi');
+        cleaned = cleaned.replace(standaloneAfterMarkdown, `**${cardName}**`);
+        
+        // Pattern 10: Handle "**\n\ncardName\n\n**cardName ([Link]" - card name after markdown before link
+        // This is a specific case for camelCase names like "cashRewards"
+        const beforeLinkPattern = new RegExp(`\\*\\*[\\s\\n]*${escapedCardName}[\\s\\n]*\\*\\*\\s*${escapedCardName}\\s*\\(`, 'gi');
+        cleaned = cleaned.replace(beforeLinkPattern, `**${cardName}** (`);
+        
+        // Pattern 11: Handle card name appearing multiple times in sequence with various separators
+        // This catches: "cardName\n\ncardName" or "cardName cardName" or "cardName\ncardName"
+        const sequentialDuplicate = new RegExp(`(${escapedCardName})([\\s\\n]+)\\1([\\s\\n]*[^\\w])`, 'gi');
+        cleaned = cleaned.replace(sequentialDuplicate, '$1$3');
+        
+        // Pattern 12: Handle card name appearing right after itself with only whitespace/newlines/asterisks
+        // This catches cases like "cashRewards\n\ncashRewards" or "cashRewards cashRewards"
+        // But only if they're adjacent (not separated by other text)
+        const adjacentDuplicate = new RegExp(`(${escapedCardName})([\\s\\n\\*]{1,20})\\1(?![\\w])`, 'gi');
+        cleaned = cleaned.replace(adjacentDuplicate, '$1');
+      });
+    }
+    
+    // Final pass: Remove duplicate card names that appear on their own lines
+    // This handles cases where a card name appears multiple times as standalone lines
+    if (recommendations && recommendations.length > 0) {
+      const textLines = cleaned.split('\n');
+      const cardNameSet = new Set(recommendations.map(rec => rec.credit_card_name.toLowerCase()));
+      const seenCardNames = new Set<string>();
+      const processedLines = textLines.map((line, index) => {
+        const trimmedLine = line.trim();
+        // Check if this line is just a card name (case-insensitive)
+        for (const cardName of cardNameSet) {
+          if (trimmedLine.toLowerCase() === cardName.toLowerCase()) {
+            // If we've seen this card name before and it's not part of markdown formatting
+            if (seenCardNames.has(cardName)) {
+              // Check if it's part of markdown (check surrounding lines)
+              const prevLine = index > 0 ? textLines[index - 1].trim() : '';
+              const nextLine = index < textLines.length - 1 ? textLines[index + 1].trim() : '';
+              const isPartOfMarkdown = prevLine.includes('**') || nextLine.includes('**') || 
+                                       prevLine.includes('[') || nextLine.includes('](');
+              // If not part of markdown, remove this duplicate
+              if (!isPartOfMarkdown) {
+                return '';
+              }
+            } else {
+              seenCardNames.add(cardName);
+            }
+            break;
+          }
+        }
+        return line;
+      });
+      cleaned = processedLines.filter(line => line !== '').join('\n');
+    }
+    
+    // Simple string-based approach: split by lines and check for duplicate patterns within lines
+    const lines = cleaned.split('\n');
+    const processedLines = lines.map(line => {
+      // Check if line contains pattern like "text****text"
+      // Split by 2+ asterisks and check if parts are the same
+      const asteriskPattern = /\*{2,}/;
+      if (asteriskPattern.test(line)) {
+        const parts = line.split(/\*{2,}/);
+        if (parts.length >= 2) {
+          // Check if first two parts are the same (case-insensitive)
+          for (let i = 0; i < parts.length - 1; i++) {
+            if (parts[i].trim() === parts[i + 1].trim() && parts[i].trim().length > 0) {
+              // Found duplicate, remove the second occurrence
+              parts.splice(i + 1, 1);
+              // Rejoin with asterisks removed
+              return parts.join('');
+            }
+          }
+        }
+      }
+      return line;
+    });
+    cleaned = processedLines.join('\n');
+    
+    // Then, handle general patterns for any duplicate text with asterisks
+    // Pattern 1: Match any word characters followed by 2+ asterisks and same word
+    cleaned = cleaned.replace(/(\w+)\*{2,}\1/gi, '$1');
+    
+    // Pattern 2: Match any sequence of characters (not newline/asterisk) followed by 2+ asterisks and same sequence
+    cleaned = cleaned.replace(/([^\n\r\*]+)\*{2,}\1/g, '$1');
+    
+    // Pattern 3: Match text with spaces, quotes, hyphens
+    cleaned = cleaned.replace(/([A-Za-z0-9\s"\-_]+)\*{2,}\1/gi, '$1');
+    
+    // Pattern 4: Handle whitespace around asterisks
+    cleaned = cleaned.replace(/([^\n\r\*]+)\s*\*{2,}\s*\1/g, '$1');
+    
+    // Pattern 5: Most aggressive - match any text with 2+ asterisks
+    cleaned = cleaned.replace(/(.+?)\*{2,}\1/g, '$1');
+    
+    // Also handle cases with markdown links: "Card Name**[Card Name](url)"
+    cleaned = cleaned.replace(/([^\n\*\[\]]+?)\*+\[([^\]]+)\]\([^\)]+\)/g, (match, p1, p2) => {
+      if (p1.trim() === p2.trim()) {
+        return `[${p2}]`;
+      }
+      return match;
+    });
+    
+    // Handle reverse pattern: "[Card Name](url)**Card Name"
+    cleaned = cleaned.replace(/\[([^\]]+)\]\([^\)]+\)\*+([^\n\*\[\]]+?)/g, (match, p1, p2) => {
+      if (p1.trim() === p2.trim()) {
+        return `[${p1}]`;
+      }
+      return match;
+    });
+    
+    return cleaned;
+  };
+
+  const removeColonPeriod = (text: string, recommendations?: Recommendation[]): string => {
+    if (!text) return text;
+    let cleaned = text;
+    
+    // Remove periods that immediately follow colons (e.g., "top options to consider:." -> "top options to consider:")
+    // Handles both ":." and ": ." (with optional whitespace)
+    cleaned = cleaned.replace(/:\s*\./g, ':');
+    
+    // Remove colon-hyphen patterns (e.g., ": -" or ":-") and replace with colon + first card name on new line
+    if (recommendations && recommendations.length > 0) {
+      const firstCard = recommendations[0];
+      const firstCardName = firstCard.credit_card_name;
+      const firstCardUrl = firstCard.apply_url || '';
+      // Replace ": -" or ":-" (with optional whitespace) with ":" followed by newline and first card name as markdown link
+      cleaned = cleaned.replace(/:\s*-\s*/g, `:\n- **[${firstCardName}](${firstCardUrl})**`);
+    } else {
+      // If no recommendations, just remove the hyphen
+      cleaned = cleaned.replace(/:\s*-\s*/g, ':');
+    }
+    
+    return cleaned;
+  };
+
   const getRecommendationHighlight = (rec: Recommendation) => {
     const highlight =
       rec.reason ||
@@ -3038,6 +3223,9 @@ export default function Home() {
                                                 ? processMarkdownSummary(message.summary, message.recommendations)
                                                 : message.summary;
                                               
+                                              // Remove duplicate card names early, before other processing
+                                              displayText = removeDuplicateCardNames(displayText, message.recommendations);
+                                              
                                               if (message.recommendations && message.recommendations.length > 0) {
                                                 const summaryLower = displayText.toLowerCase();
                                                 const summaryNormalized = normalizeText(displayText);
@@ -3062,6 +3250,9 @@ export default function Home() {
                                               displayText = removeDuplicateFinalSentence(displayText);
                                               displayText = normalizeMarkdownListItems(displayText);
                                               displayText = cleanUrlText(displayText);
+                                              // Call again after all processing to catch any duplicates introduced
+                                              displayText = removeDuplicateCardNames(displayText, message.recommendations);
+                                              displayText = removeColonPeriod(displayText, message.recommendations);
                                               return displayText;
                                             })()}
                                           </ReactMarkdown>
@@ -3438,6 +3629,9 @@ export default function Home() {
                                           ? processMarkdownSummary(message.summary, message.recommendations)
                                           : message.summary;
                                         
+                                        // Remove duplicate card names early, before other processing
+                                        displayText = removeDuplicateCardNames(displayText, message.recommendations);
+                                        
                                         if (message.recommendations && message.recommendations.length > 0) {
                                           const summaryLower = displayText.toLowerCase();
                                           const summaryNormalized = normalizeText(displayText);
@@ -3462,6 +3656,9 @@ export default function Home() {
                                         displayText = removeDuplicateFinalSentence(displayText);
                                         displayText = normalizeMarkdownListItems(displayText);
                                         displayText = cleanUrlText(displayText);
+                                        // Call again after all processing to catch any duplicates introduced
+                                        displayText = removeDuplicateCardNames(displayText, message.recommendations);
+                                        displayText = removeColonPeriod(displayText, message.recommendations);
                                         return displayText;
                                       })()}
                                     </ReactMarkdown>
@@ -3554,7 +3751,7 @@ export default function Home() {
               <div ref={messagesEndRef} />
               
               {/* Mobile: Expandable recommendation boxes below chatbox */}
-              {topThreeRecommendations.length > 0 && (
+              {topThreeRecommendations.length > 0 && !isLoading && (
                 <div className="lg:hidden mt-4 space-y-3 flex-shrink-0 max-w-sm">
                   {topThreeRecommendations.map((rec, index) => {
                     const isExpanded = expandedRecommendations.has(index);
