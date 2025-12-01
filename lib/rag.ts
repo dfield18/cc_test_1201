@@ -252,9 +252,9 @@ IMPORTANT: Include ALL relevant information about the card. Make it comprehensiv
     
     // Clean duplicate card names from summary immediately after parsing
     let summary = response.summary || `Information about ${cardData.credit_card_name}`;
-    summary = summary.split('\n').map(line => {
+    summary = summary.split('\n').map((line: string) => {
       // Match: any text, 2+ asterisks, same text, then anything after
-      return line.replace(/([^\*]+?)\*{2,}\1(\s*.*)$/gi, (match, p1, p2) => {
+      return line.replace(/([^\*]+?)\*{2,}\1(\s*.*)$/gi, (match: string, p1: string, p2: string) => {
         const cardName = p1.trim();
         const afterText = p2.trim();
         return afterText ? `${cardName} ${afterText}` : cardName;
@@ -985,7 +985,7 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
           
           // Pattern: CardName CardName (with space between) followed by optional description
           const duplicateWithSpace = new RegExp(`([-•]?\\s*)(${escapedCardName})\\s+\\2(\\s*[-–—]?\\s*.*?)(?=\\n|$)`, 'gi');
-          cleanedSummary = cleanedSummary.replace(duplicateWithSpace, (match, prefix, p1, p2) => {
+          cleanedSummary = cleanedSummary.replace(duplicateWithSpace, (match: string, prefix: string, p1: string, p2: string) => {
             const afterText = p2.trim();
             const result = `${prefix || ''}${cardName}${afterText ? ' ' + afterText : ''}`;
             console.log(`[BACKEND] Removed duplicate after asterisk replacement: "${match.substring(0, 100)}" -> "${result.substring(0, 100)}"`);
@@ -994,7 +994,7 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
         });
         
         // General pattern: Remove any duplicate text separated by space (for card names)
-        cleanedSummary = cleanedSummary.replace(/([-•]?\s*)([a-zA-Z0-9\s®™©]{3,50}?)\s+\2(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match, prefix, p1, p2) => {
+        cleanedSummary = cleanedSummary.replace(/([-•]?\s*)([a-zA-Z0-9\s®™©]{3,50}?)\s+\2(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match: string, prefix: string, p1: string, p2: string) => {
           const cardName = p1.trim();
           const afterText = p2.trim();
           if (cardName.length > 3 && cardName.length < 50) {
@@ -1014,7 +1014,7 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
           // Pattern 1: CardName****CardName - description (most common issue)
           // Remove the $ anchor to match anywhere in the line, not just at the end
           const duplicatePattern = new RegExp(`(${escapedCardName})\\*{2,}\\1(\\s*[-–—]?\\s*.*?)(?=\\n|$)`, 'gi');
-          cleanedSummary = cleanedSummary.replace(duplicatePattern, (match, p1, p2) => {
+          cleanedSummary = cleanedSummary.replace(duplicatePattern, (match: string, p1: string, p2: string) => {
             const afterText = p2.trim();
             console.log(`[CLEANING FIRST PASS] Found duplicate: "${match.substring(0, 100)}" -> "${cardName}${afterText ? ' ' + afterText : ''}"`);
             return afterText ? `${cardName} ${afterText}` : cardName;
@@ -1023,7 +1023,7 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
           // Pattern 2: CardName****CardName (without description, at start of line or after bullet)
           // This specifically handles list items like "- CardName****CardName - description"
           const duplicatePatternStart = new RegExp(`([-•]?\\s*)(${escapedCardName})\\*{2,}\\2(\\s*[-–—]?\\s*.*?)(?=\\n|$)`, 'gim');
-          cleanedSummary = cleanedSummary.replace(duplicatePatternStart, (match, prefix, p1, p2) => {
+          cleanedSummary = cleanedSummary.replace(duplicatePatternStart, (match: string, prefix: string, p1: string, p2: string) => {
             const afterText = p2.trim();
             const result = `${prefix || ''}${cardName}${afterText ? ' ' + afterText : ''}`;
             console.log(`[CLEANING FIRST PASS START] Found duplicate: "${match.substring(0, 100)}" -> "${result.substring(0, 100)}"`);
@@ -1032,7 +1032,7 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
           
           // Pattern 3: **CardName**CardName - description
           const boldDuplicatePattern = new RegExp(`\\*\\*${escapedCardName}\\*\\*${escapedCardName}(\\s*[-–—]?\\s*.*?)(?=\\n|$)`, 'gi');
-          cleanedSummary = cleanedSummary.replace(boldDuplicatePattern, (match, p1) => {
+          cleanedSummary = cleanedSummary.replace(boldDuplicatePattern, (match: string, p1: string) => {
             console.log(`[CLEANING FIRST PASS BOLD] Found duplicate: "${match.substring(0, 100)}" -> "**${cardName}**${p1}"`);
             return `**${cardName}**${p1}`;
           });
@@ -1043,7 +1043,7 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
       // This catches patterns like "cashRewards****cashRewards" even if the card name in data is "Cash Rewards"
       // Also catches patterns with spaces and special characters like "Citi Custom Cash® Card****Citi Custom Cash® Card"
       // Remove the $ anchor to match anywhere, not just at end of line
-      cleanedSummary = cleanedSummary.replace(/([a-zA-Z0-9\s®™©]+?)\*{2,}\1(\s*[-–—]?\s*.*?)(?=\n|$)/gim, (match, p1, p2) => {
+      cleanedSummary = cleanedSummary.replace(/([a-zA-Z0-9\s®™©]+?)\*{2,}\1(\s*[-–—]?\s*.*?)(?=\n|$)/gim, (match: string, p1: string, p2: string) => {
         const cardName = p1.trim();
         const afterText = p2.trim();
         // Only process if it looks like a card name (more than 3 characters to avoid false positives, less than 100 to avoid matching entire lines)
@@ -1055,12 +1055,12 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
       });
       
       // Then use general patterns to catch any remaining duplicates
-      summary = cleanedSummary.split('\n').map(line => {
+      summary = cleanedSummary.split('\n').map((line: string) => {
         // Pattern 1: Match any sequence of characters (alphanumeric, spaces, special chars) followed by 2+ asterisks and the same sequence
         // This catches patterns like "cashRewards****cashRewards" and "Citi Custom Cash® Card****Citi Custom Cash® Card"
         // The pattern matches: (text) followed by ** or more, followed by the same (text)
         // Use non-greedy matching and lookahead to match anywhere in the line
-        let cleaned = line.replace(/([a-zA-Z0-9\s®™©]+?)\*{2,}\1(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match, p1, p2) => {
+        let cleaned = line.replace(/([a-zA-Z0-9\s®™©]+?)\*{2,}\1(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match: string, p1: string, p2: string) => {
           const cardName = p1.trim();
           const afterText = p2.trim();
           // Only process if it looks like a card name (more than 2 characters to avoid false positives, less than 100 to avoid matching entire lines)
@@ -1073,7 +1073,7 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
         
         // Pattern 1b: More specific - catch camelCase or word sequences without spaces
         // This handles cases like "cashRewards****cashRewards" more reliably
-        cleaned = cleaned.replace(/([a-zA-Z0-9]+)\*{2,}\1(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match, p1, p2) => {
+        cleaned = cleaned.replace(/([a-zA-Z0-9]+)\*{2,}\1(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match: string, p1: string, p2: string) => {
           const cardName = p1.trim();
           const afterText = p2.trim();
           // Only process if it looks like a card name (more than 3 characters)
@@ -1085,7 +1085,7 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
         });
         
         // Pattern 2: Handle cases where card name might be in bold markdown: **CardName**CardName
-        cleaned = cleaned.replace(/\*\*([^*]+?)\*\*\1(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match, p1, p2) => {
+        cleaned = cleaned.replace(/\*\*([^*]+?)\*\*\1(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match: string, p1: string, p2: string) => {
           const cardName = p1.trim();
           const afterText = p2.trim();
           return afterText ? `**${cardName}** ${afterText}` : `**${cardName}**`;
@@ -1231,7 +1231,7 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
           
           // Pattern: CardName CardName (with space between) followed by optional description
           const duplicateWithSpace = new RegExp(`([-•]?\\s*)(${escapedCardName})\\s+\\2(\\s*[-–—]?\\s*.*?)(?=\\n|$)`, 'gi');
-          summary = summary.replace(duplicateWithSpace, (match, prefix, p1, p2) => {
+          summary = summary.replace(duplicateWithSpace, (match: string, prefix: string, p1: string, p2: string) => {
             const afterText = p2.trim();
             const result = `${prefix || ''}${cardName}${afterText ? ' ' + afterText : ''}`;
             console.log(`[BACKEND BEFORE REBUILD] Removed duplicate: "${match.substring(0, 100)}" -> "${result.substring(0, 100)}"`);
@@ -1240,17 +1240,17 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
         });
       }
       
-      summary = summary.split('\n').map(line => {
+      summary = summary.split('\n').map((line: string) => {
         // Aggressively remove duplicate card names with asterisks
         // Use lookahead instead of $ anchor to match anywhere in the line
-        let cleaned = line.replace(/([^\*]+?)\*{2,}\1(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match, p1, p2) => {
+        let cleaned = line.replace(/([^\*]+?)\*{2,}\1(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match: string, p1: string, p2: string) => {
           const cardName = p1.trim();
           const afterText = p2.trim();
           console.log(`[CLEANING BEFORE REBUILD CHECK] Found duplicate: "${match.substring(0, 100)}" -> "${cardName}${afterText ? ' ' + afterText : ''}"`);
           return afterText ? `${cardName} ${afterText}` : cardName;
         });
         // Also handle bold markdown duplicates
-        cleaned = cleaned.replace(/\*\*([^*]+?)\*\*\1(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match, p1, p2) => {
+        cleaned = cleaned.replace(/\*\*([^*]+?)\*\*\1(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match: string, p1: string, p2: string) => {
           const cardName = p1.trim();
           const afterText = p2.trim();
           return afterText ? `**${cardName}** ${afterText}` : `**${cardName}**`;
@@ -1294,9 +1294,9 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
           finalSummary = openingSentence + '\n\n' + cardsText;
         } else {
           // Even if we're not rebuilding, clean the summary one more time to be safe
-          finalSummary = summary.split('\n').map(line => {
+          finalSummary = summary.split('\n').map((line: string) => {
             // Use lookahead instead of $ anchor to match anywhere in the line
-            return line.replace(/([^\*]+?)\*{2,}\1(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match, p1, p2) => {
+            return line.replace(/([^\*]+?)\*{2,}\1(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match: string, p1: string, p2: string) => {
               const cardName = p1.trim();
               const afterText = p2.trim();
               console.log(`[CLEANING NOT REBUILDING] Found duplicate: "${match.substring(0, 100)}" -> "${cardName}${afterText ? ' ' + afterText : ''}"`);
@@ -1316,7 +1316,7 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
           // Pattern 1: CardName****CardName - description
           // Use lookahead instead of $ anchor to match anywhere, not just at end of line
           const duplicatePattern = new RegExp(`(${escapedCardName})\\*{2,}\\1(\\s*[-–—]?\\s*.*?)(?=\\n|$)`, 'gi');
-          finalSummary = finalSummary.replace(duplicatePattern, (match, p1, p2) => {
+          finalSummary = finalSummary.replace(duplicatePattern, (match: string, p1: string, p2: string) => {
             const afterText = p2.trim();
             console.log(`[CLEANING FINAL] Found duplicate: "${match.substring(0, 100)}" -> "${cardName}${afterText ? ' ' + afterText : ''}"`);
             return afterText ? `${cardName} ${afterText}` : cardName;
@@ -1324,14 +1324,14 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
           
           // Pattern 2: **CardName**CardName - description  
           const boldDuplicatePattern = new RegExp(`\\*\\*${escapedCardName}\\*\\*${escapedCardName}(\\s*[-–—]?\\s*.*?)(?=\\n|$)`, 'gi');
-          finalSummary = finalSummary.replace(boldDuplicatePattern, (match, p1) => {
+          finalSummary = finalSummary.replace(boldDuplicatePattern, (match: string, p1: string) => {
             console.log(`[CLEANING FINAL BOLD] Found bold duplicate: "${match.substring(0, 100)}" -> "**${cardName}**${p1}"`);
             return `**${cardName}**${p1}`;
           });
           
           // Pattern 3: **[Card Name](url)**Card Name - description (card name after link)
           const linkAfterPattern = new RegExp(`\\*\\*\\[${escapedCardName}\\]\\([^)]+\\)\\*\\*${escapedCardName}(\\s*[-–—]?\\s*.*?)(?=\\n|$)`, 'gi');
-          finalSummary = finalSummary.replace(linkAfterPattern, (match, p1) => {
+          finalSummary = finalSummary.replace(linkAfterPattern, (match: string, p1: string) => {
             // Extract the URL from the match
             const urlMatch = match.match(/\[.*?\]\((.*?)\)/);
             const url = urlMatch ? urlMatch[1] : '';
@@ -1342,7 +1342,7 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
           
           // Pattern 4: **Card Name**[Card Name](url) - description (card name before link)
           const linkBeforePattern = new RegExp(`\\*\\*${escapedCardName}\\*\\*\\[${escapedCardName}\\]\\([^)]+\\)(\\s*[-–—]?\\s*.*?)(?=\\n|$)`, 'gi');
-          finalSummary = finalSummary.replace(linkBeforePattern, (match, p1) => {
+          finalSummary = finalSummary.replace(linkBeforePattern, (match: string, p1: string) => {
             // Extract the URL from the match
             const urlMatch = match.match(/\[.*?\]\((.*?)\)/);
             const url = urlMatch ? urlMatch[1] : '';
@@ -1353,7 +1353,7 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
           
           // Pattern 5: Card Name**[Card Name](url)** - description (card name before bold link)
           const nameBeforeBoldLinkPattern = new RegExp(`${escapedCardName}\\*\\*\\[${escapedCardName}\\]\\([^)]+\\)\\*\\*(\\s*[-–—]?\\s*.*?)(?=\\n|$)`, 'gi');
-          finalSummary = finalSummary.replace(nameBeforeBoldLinkPattern, (match, p1) => {
+          finalSummary = finalSummary.replace(nameBeforeBoldLinkPattern, (match: string, p1: string) => {
             const urlMatch = match.match(/\[.*?\]\((.*?)\)/);
             const url = urlMatch ? urlMatch[1] : '';
             const afterText = p1.trim();
@@ -1375,7 +1375,7 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
           
           // Pattern: CardName CardName (with space between) followed by optional description
           const duplicateWithSpace = new RegExp(`([-•]?\\s*)(${escapedCardName})\\s+\\2(\\s*[-–—]?\\s*.*?)(?=\\n|$)`, 'gi');
-          finalSummary = finalSummary.replace(duplicateWithSpace, (match, prefix, p1, p2) => {
+          finalSummary = finalSummary.replace(duplicateWithSpace, (match: string, prefix: string, p1: string, p2: string) => {
             const afterText = p2.trim();
             const result = `${prefix || ''}${cardName}${afterText ? ' ' + afterText : ''}`;
             console.log(`[CLEANING FINAL SAFETY NET] Removed duplicate: "${match.substring(0, 100)}" -> "${result.substring(0, 100)}"`);
@@ -1386,7 +1386,7 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
       
       // General catch-all: Remove any text pattern that looks like "CardName****CardName"
       // This catches duplicates even if the card name doesn't exactly match our recommendations
-      finalSummary = finalSummary.replace(/([-•]?\s*)([a-zA-Z0-9\s®™©]{3,50}?)\*{2,}\2(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match, prefix, p1, p2) => {
+      finalSummary = finalSummary.replace(/([-•]?\s*)([a-zA-Z0-9\s®™©]{3,50}?)\*{2,}\2(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match: string, prefix: string, p1: string, p2: string) => {
         const cardName = p1.trim();
         const afterText = p2.trim();
         // Only process if it looks like a card name (more than 3 characters, less than 50)
@@ -1400,7 +1400,7 @@ Select the best 3 cards from the candidates and return JSON with the formatted m
       
       // One more aggressive pass: line-by-line cleaning for any remaining duplicates
       // This catches cases where the card name appears both inside and outside the markdown link
-      finalSummary = finalSummary.split('\n').map(line => {
+      finalSummary = finalSummary.split('\n').map((line: string) => {
         if (finalRecommendations.length > 0) {
           for (const rec of finalRecommendations) {
             const cardName = rec.credit_card_name;
