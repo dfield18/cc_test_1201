@@ -934,8 +934,11 @@ export default function Home() {
       }
     };
 
-    // Handle touch events for trackpads
+    // Handle touch events for trackpads (desktop only - don't interfere with mobile scrolling)
     const handleTouchMove = (e: TouchEvent) => {
+      const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
+      if (!isDesktop) return; // Don't interfere with mobile touch scrolling
+      
       const metricsBottom = getMetricsBottom();
       if (metricsBottom === 0) return;
 
@@ -966,14 +969,19 @@ export default function Home() {
     // Run after a short delay to ensure DOM is ready
     setTimeout(setMaxScroll, 100);
 
-    window.addEventListener('scroll', handleScroll, { passive: false });
-    window.addEventListener('wheel', handleWheel, { passive: false });
-    window.addEventListener('touchmove', handleTouchMove, { passive: false });
+    // Only add these listeners on desktop
+    if (isDesktop) {
+      window.addEventListener('scroll', handleScroll, { passive: false });
+      window.addEventListener('wheel', handleWheel, { passive: false });
+      window.addEventListener('touchmove', handleTouchMove, { passive: false });
+    }
 
     return () => {
-      window.removeEventListener('scroll', handleScroll);
-      window.removeEventListener('wheel', handleWheel);
-      window.removeEventListener('touchmove', handleTouchMove);
+      if (isDesktop) {
+        window.removeEventListener('scroll', handleScroll);
+        window.removeEventListener('wheel', handleWheel);
+        window.removeEventListener('touchmove', handleTouchMove);
+      }
     };
   }, [messages.length]); // Re-run when messages change
 
@@ -2990,7 +2998,7 @@ export default function Home() {
   };
 
   return (
-    <div className="relative overflow-hidden min-h-screen bg-background">
+    <div className={`relative bg-background ${isMobile ? 'min-h-screen' : 'min-h-screen overflow-hidden'}`}>
       {/* Custom styles for desktop */}
       <style dangerouslySetInnerHTML={{__html: `
         @media (min-width: 1024px) {
@@ -3369,6 +3377,13 @@ export default function Home() {
                 })()}
               </div>
             )}
+            
+            {/* Partner disclaimer below recommended questions - Desktop only */}
+            <div className="hidden lg:block mt-6 mb-4 px-4 py-3 bg-slate-50/80 border border-slate-200/60 rounded-xl max-w-4xl mx-auto">
+              <p className="text-xs lg:text-sm text-slate-600 leading-relaxed text-center">
+                Some of the credit cards on this site are from partners who pay us when you click or apply. This helps keep the site running, but it doesn't influence our recommendations.
+              </p>
+            </div>
           </div>
         )}
 
@@ -3495,148 +3510,162 @@ export default function Home() {
                             );
 
                             return (
-                              <div key={displayIndex} className="mb-6 last:mb-0" data-message-index={displayIndex}>
-                                {/* User Message */}
-                                <div className="flex items-start gap-3 mb-5">
-                                  <div className="flex-shrink-0 w-9 h-9 rounded-full bg-primary flex items-center justify-center shadow-md">
-                                    <User className="w-5 h-5 text-white" />
-                                  </div>
-                                  <div className="bg-primary text-white rounded-2xl rounded-tl-sm p-4 px-5 shadow-md flex-1 transition-all duration-200 min-w-0 overflow-hidden">
-                                    <p className="whitespace-pre-wrap text-xl font-medium break-words overflow-wrap-anywhere">{message.content}</p>
-                                  </div>
-                                </div>
-                                
-                                {/* Bot Response */}
-                                {message.summary && (
-                                  <div className={`flex items-start gap-3 ${isErrorMessage ? '' : 'mb-0'}`}>
-                                    <div className="flex-shrink-0 w-9 h-9 rounded-full bg-secondary flex items-center justify-center shadow-sm border border-slate-200">
-                                      <Sparkles className="w-5 h-5 text-primary" />
+                              <React.Fragment key={displayIndex}>
+                                <div className="mb-6 last:mb-0" data-message-index={displayIndex}>
+                                  {/* User Message */}
+                                  <div className="flex items-start gap-3 mb-5">
+                                    <div className="flex-shrink-0 w-9 h-9 rounded-full bg-primary flex items-center justify-center shadow-md">
+                                      <User className="w-5 h-5 text-white" />
                                     </div>
-                                    {isErrorMessage ? (
-                                      <div className="flex-1 bg-white rounded-2xl p-5 shadow-md border border-slate-200 transition-all duration-200 min-w-0 overflow-hidden">
-                                        <div className="flex items-start gap-3 mb-4">
-                                          <span className="text-2xl flex-shrink-0">💡</span>
-                                        <p className="text-lg text-foreground leading-relaxed break-words">
-                                            Let me help you find the right card. Try asking about specific features like:
-                                          </p>
-                                        </div>
-                                        <div className="flex flex-wrap gap-2 mt-4">
-                                          {[
-                                            "Cards with no annual fee",
-                                            "Best cash back rewards",
-                                            "Travel cards under $100/year"
-                                          ].map((suggestion, idx) => (
-                                            <button
-                                              key={idx}
-                                              onClick={() => handleSuggestedQuestion(suggestion)}
-                                              disabled={isLoading}
-                                              className="border border-primary text-primary rounded-full px-4 py-2.5 text-sm font-medium hover:bg-secondary focus:bg-secondary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                                            >
-                                              {suggestion}
-                                            </button>
-                                          ))}
-                                        </div>
+                                    <div className="bg-primary text-white rounded-2xl rounded-tl-sm p-4 px-5 shadow-md flex-1 transition-all duration-200 min-w-0 overflow-hidden">
+                                      <p className="whitespace-pre-wrap text-xl font-medium break-words overflow-wrap-anywhere">{message.content}</p>
+                                    </div>
+                                  </div>
+                                  
+                                  {/* Bot Response */}
+                                  {message.summary && (
+                                    <div className={`flex items-start gap-3 ${isErrorMessage ? '' : 'mb-0'}`}>
+                                      <div className="flex-shrink-0 w-9 h-9 rounded-full bg-secondary flex items-center justify-center shadow-sm border border-slate-200">
+                                        <Sparkles className="w-5 h-5 text-primary" />
                                       </div>
-                                    ) : (
-                                      <div className="bg-white rounded-2xl pt-5 px-5 pb-4 shadow-md border border-slate-200 flex-1 transition-all duration-200 min-w-0 overflow-hidden">
-                                      <div className="prose prose-sm lg:prose-lg max-w-none overflow-x-hidden prose-li:my-0">
-                                          <ReactMarkdown
-                                            components={{
-                                              a: ({ ...props }) => (
-                                                <a 
-                                                  {...props} 
-                                                  target="_blank" 
-                                                  rel="noopener noreferrer"
-                                                  className="text-primary font-normal hover:text-primary/80 underline decoration-2 decoration-primary/30 hover:decoration-primary/50 transition-colors duration-200 break-words"
-                                                />
-                                              ),
-                                              p: ({ ...props }) => (
-                                                <p className="mb-2 text-lg text-black leading-relaxed break-words last:mb-0" {...props} />
-                                              ),
-                                              ul: ({ ...props }) => (
-                                                <ul className="list-none space-y-2.5 lg:space-y-4 my-2 last:mb-0 [&>li]:block [&>li]:w-full" {...props} />
-                                              ),
-                                              li: ({ ...props }) => {
-                                                const children = props.children;
-                                                // Check if children contain an anchor element (link)
-                                                const hasLink = React.Children.toArray(children).some((child: any) => 
-                                                  child?.type === 'a' || (typeof child === 'object' && child?.props?.href)
-                                                );
-                                                // Also check if it's a string with markdown link pattern
-                                                const text = typeof children === 'string' ? children : '';
-                                                const hasLinkPattern = text.includes('[') && text.includes('](');
-                                                
-                                                if (hasLink || hasLinkPattern) {
+                                      {isErrorMessage ? (
+                                        <div className="flex-1 bg-white rounded-2xl p-5 shadow-md border border-slate-200 transition-all duration-200 min-w-0 overflow-hidden">
+                                          <div className="flex items-start gap-3 mb-4">
+                                            <span className="text-2xl flex-shrink-0">💡</span>
+                                          <p className="text-lg text-foreground leading-relaxed break-words">
+                                              Let me help you find the right card. Try asking about specific features like:
+                                            </p>
+                                          </div>
+                                          <div className="flex flex-wrap gap-2 mt-4">
+                                            {[
+                                              "Cards with no annual fee",
+                                              "Best cash back rewards",
+                                              "Travel cards under $100/year"
+                                            ].map((suggestion, idx) => (
+                                              <button
+                                                key={idx}
+                                                onClick={() => handleSuggestedQuestion(suggestion)}
+                                                disabled={isLoading}
+                                                className="border border-primary text-primary rounded-full px-4 py-2.5 text-sm font-medium hover:bg-secondary focus:bg-secondary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                              >
+                                                {suggestion}
+                                              </button>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div className="bg-white rounded-2xl pt-5 px-5 pb-4 shadow-md border border-slate-200 flex-1 transition-all duration-200 min-w-0 overflow-hidden">
+                                        <div className="prose prose-sm lg:prose-lg max-w-none overflow-x-hidden prose-li:my-0">
+                                            <ReactMarkdown
+                                              components={{
+                                                a: ({ ...props }) => (
+                                                  <a 
+                                                    {...props} 
+                                                    target="_blank" 
+                                                    rel="noopener noreferrer"
+                                                    className="text-primary font-normal hover:text-primary/80 underline decoration-2 decoration-primary/30 hover:decoration-primary/50 transition-colors duration-200 break-words"
+                                                  />
+                                                ),
+                                                p: ({ ...props }) => (
+                                                  <p className="mb-2 text-lg text-black leading-relaxed break-words last:mb-0" {...props} />
+                                                ),
+                                                ul: ({ ...props }) => (
+                                                  <ul className="list-none space-y-2.5 lg:space-y-4 my-2 last:mb-0 [&>li]:block [&>li]:w-full" {...props} />
+                                                ),
+                                                li: ({ ...props }) => {
+                                                  const children = props.children;
+                                                  // Check if children contain an anchor element (link)
+                                                  const hasLink = React.Children.toArray(children).some((child: any) => 
+                                                    child?.type === 'a' || (typeof child === 'object' && child?.props?.href)
+                                                  );
+                                                  // Also check if it's a string with markdown link pattern
+                                                  const text = typeof children === 'string' ? children : '';
+                                                  const hasLinkPattern = text.includes('[') && text.includes('](');
+                                                  
+                                                  if (hasLink || hasLinkPattern) {
+                                                    return (
+                                                      <li className="mb-2 lg:mb-4 block w-full text-lg text-black leading-relaxed break-words last:mb-0 whitespace-normal" style={{ display: 'block', clear: 'both', width: '100%' }} {...props} />
+                                                    );
+                                                  }
+                                                  // Regular option description
                                                   return (
                                                     <li className="mb-2 lg:mb-4 block w-full text-lg text-black leading-relaxed break-words last:mb-0 whitespace-normal" style={{ display: 'block', clear: 'both', width: '100%' }} {...props} />
                                                   );
-                                                }
-                                                // Regular option description
-                                                return (
-                                                  <li className="mb-2 lg:mb-4 block w-full text-lg text-black leading-relaxed break-words last:mb-0 whitespace-normal" style={{ display: 'block', clear: 'both', width: '100%' }} {...props} />
-                                                );
-                                              },
-                                            }}
-                                          >
-                                            {(() => {
-                                              let displayText = message.recommendations && message.recommendations.length > 0
-                                                ? processMarkdownSummary(message.summary, message.recommendations)
-                                                : message.summary;
-                                              
-                                              // Remove duplicate card names early, before other processing
-                                              displayText = removeDuplicateCardNames(displayText, message.recommendations);
-                                              
-                                              if (message.recommendations && message.recommendations.length > 0) {
-                                                const summaryLower = displayText.toLowerCase();
-                                                const summaryNormalized = normalizeText(displayText);
-                                                const missingCards = message.recommendations.filter(rec => {
-                                                  const cardNameLower = rec.credit_card_name.toLowerCase();
-                                                  const reasonLower = (rec.reason || '').toLowerCase();
-                                                  const reasonNormalized = normalizeText(rec.reason || '');
-                                                  const reasonDuplicate =
-                                                    (reasonLower && summaryLower.includes(reasonLower)) ||
-                                                    (reasonNormalized && summaryNormalized.includes(reasonNormalized));
-                                                  return !summaryLower.includes(cardNameLower) && !reasonDuplicate;
-                                                });
+                                                },
+                                              }}
+                                            >
+                                              {(() => {
+                                                let displayText = message.recommendations && message.recommendations.length > 0
+                                                  ? processMarkdownSummary(message.summary, message.recommendations)
+                                                  : message.summary;
                                                 
-                                                if (missingCards.length > 0) {
-                                                  const cardsText = missingCards.map(rec => 
-                                                    `- **[${rec.credit_card_name}](${rec.apply_url})** - ${rec.reason}`
-                                                  ).join('\n\n');
-                                                  displayText = displayText + '\n\n' + cardsText;
+                                                // Remove duplicate card names early, before other processing
+                                                displayText = removeDuplicateCardNames(displayText, message.recommendations);
+                                                
+                                                if (message.recommendations && message.recommendations.length > 0) {
+                                                  const summaryLower = displayText.toLowerCase();
+                                                  const summaryNormalized = normalizeText(displayText);
+                                                  const missingCards = message.recommendations.filter(rec => {
+                                                    const cardNameLower = rec.credit_card_name.toLowerCase();
+                                                    const reasonLower = (rec.reason || '').toLowerCase();
+                                                    const reasonNormalized = normalizeText(rec.reason || '');
+                                                    const reasonDuplicate =
+                                                      (reasonLower && summaryLower.includes(reasonLower)) ||
+                                                      (reasonNormalized && summaryNormalized.includes(reasonNormalized));
+                                                    return !summaryLower.includes(cardNameLower) && !reasonDuplicate;
+                                                  });
+                                                  
+                                                  if (missingCards.length > 0) {
+                                                    const cardsText = missingCards.map(rec => 
+                                                      `- **[${rec.credit_card_name}](${rec.apply_url})** - ${rec.reason}`
+                                                    ).join('\n\n');
+                                                    displayText = displayText + '\n\n' + cardsText;
+                                                  }
                                                 }
-                                              }
-                                              
-                                              displayText = removeDuplicateFinalSentence(displayText);
-                                              displayText = normalizeMarkdownListItems(displayText);
-                                              displayText = cleanUrlText(displayText);
-                                              // Call again after all processing to catch any duplicates introduced
-                                              displayText = removeDuplicateCardNames(displayText, message.recommendations);
-                                              displayText = removeColonPeriod(displayText, message.recommendations);
-                                              displayText = replaceColonWithHyphen(displayText, message.recommendations);
-                                              
-                                              // Final safety net: Remove any remaining '****' patterns that might have slipped through
-                                              // This catches any pattern like "text****text" and removes the duplicate
-                                              displayText = displayText.replace(/([^\*]+?)\*{2,}\1(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match, p1, p2) => {
-                                                const text = p1.trim();
-                                                const afterText = p2.trim();
-                                                return afterText ? `${text} ${afterText}` : text;
-                                              });
-                                              // Also catch any standalone '****' sequences and replace with space
-                                              displayText = displayText.replace(/\*{2,}/g, ' ');
-                                              
-                                              // Final pass: Ensure each card name appears only once
-                                              displayText = ensureSingleCardNameOccurrence(displayText, message.recommendations);
-                                              
-                                              return displayText;
-                                            })()}
-                                          </ReactMarkdown>
+                                                
+                                                displayText = removeDuplicateFinalSentence(displayText);
+                                                displayText = normalizeMarkdownListItems(displayText);
+                                                displayText = cleanUrlText(displayText);
+                                                // Call again after all processing to catch any duplicates introduced
+                                                displayText = removeDuplicateCardNames(displayText, message.recommendations);
+                                                displayText = removeColonPeriod(displayText, message.recommendations);
+                                                displayText = replaceColonWithHyphen(displayText, message.recommendations);
+                                                
+                                                // Final safety net: Remove any remaining '****' patterns that might have slipped through
+                                                // This catches any pattern like "text****text" and removes the duplicate
+                                                displayText = displayText.replace(/([^\*]+?)\*{2,}\1(\s*[-–—]?\s*.*?)(?=\n|$)/gi, (match, p1, p2) => {
+                                                  const text = p1.trim();
+                                                  const afterText = p2.trim();
+                                                  return afterText ? `${text} ${afterText}` : text;
+                                                });
+                                                // Also catch any standalone '****' sequences and replace with space
+                                                displayText = displayText.replace(/\*{2,}/g, ' ');
+                                                
+                                                // Final pass: Ensure each card name appears only once
+                                                displayText = ensureSingleCardNameOccurrence(displayText, message.recommendations);
+                                                
+                                                return displayText;
+                                              })()}
+                                            </ReactMarkdown>
+                                          </div>
                                         </div>
-                                      </div>
-                                    )}
-                                  </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                                
+                                {/* Disclaimer after every chatbot response */}
+                                {message.summary && (
+                                  <>
+                                    <div className="mt-6 mb-6 px-4 py-3 bg-slate-50/80 border border-slate-200/60 rounded-xl">
+                                      <p className="text-sm text-slate-600 leading-relaxed">
+                                        We do our best to keep credit card info current, but details can change quickly. Always check the issuer's terms before you apply.
+                                      </p>
+                                    </div>
+                                    
+                                  </>
                                 )}
-                              </div>
+                              </React.Fragment>
                             );
                           });
                         })()}
@@ -3857,7 +3886,12 @@ export default function Home() {
                     : 'lg:overflow-hidden overflow-visible scrollbar-hide'
                 }`}
                 style={messages.some(msg => msg.role === 'user') 
-                  ? (isMobile ? { overflowX: 'hidden', marginBottom: '1rem' } : { 
+                  ? (isMobile ? { 
+                      overflowX: 'hidden', 
+                      overflowY: 'visible',
+                      marginBottom: '1rem', 
+                      paddingBottom: '2rem'
+                    } : { 
                       scrollbarWidth: 'thin', 
                       overflowX: 'hidden', 
                       overflowY: 'auto',
@@ -4052,6 +4086,18 @@ export default function Home() {
                                 </div>
                               )}
                             </div>
+                          )}
+                          
+                          {/* Disclaimer after every chatbot response - Mobile */}
+                          {message.summary && (
+                            <>
+                              <div className="mt-6 mb-6 px-4 py-3 bg-slate-50/80 border border-slate-200/60 rounded-xl">
+                                <p className="text-sm text-slate-600 leading-relaxed">
+                                  We do our best to keep credit card info current, but details can change quickly. Always check the issuer's terms before you apply.
+                                </p>
+                              </div>
+                              
+                            </>
                           )}
                         </div>
                       );
@@ -4281,6 +4327,13 @@ export default function Home() {
                           </button>
                         ))}
                       </div>
+                      
+                      {/* Partner disclaimer below recommended questions - Desktop */}
+                      <div className="mt-6 mb-4 px-4 py-3 bg-slate-50/80 border border-slate-200/60 rounded-xl">
+                        <p className="text-xs text-slate-600 leading-relaxed text-center">
+                          Some of the credit cards on this site are from partners who pay us when you click or apply. This helps keep the site running, but it doesn't influence our recommendations.
+                        </p>
+                      </div>
                     </div>
                   )}
 
@@ -4307,6 +4360,13 @@ export default function Home() {
                         </div>
                       </button>
                     ))}
+                  </div>
+                  
+                  {/* Partner disclaimer below recommended questions - Mobile */}
+                  <div className="mt-4 mb-4 px-4 py-3 bg-slate-50/80 border border-slate-200/60 rounded-xl">
+                    <p className="text-xs text-slate-600 leading-relaxed text-center">
+                      Some of the credit cards on this site are from partners who pay us when you click or apply. This helps keep the site running, but it doesn't influence our recommendations.
+                    </p>
                   </div>
                 </div>
               )}
@@ -4508,9 +4568,24 @@ export default function Home() {
 
                   return (
                     <>
-                      <div className="flex flex-col gap-4 mb-6 w-full">
+                      <div className="flex flex-col gap-4 mb-6 w-full max-w-md">
                         {mostRecentAssistantMessage.recommendations.slice(0, 3).map((rec, recIndex) => {
+                          // Debug: Log each recommendation to verify data structure
+                          if (recIndex === 0 || recIndex === 1 || recIndex === 2) {
+                            console.log(`Card ${recIndex}:`, {
+                              cardName: rec.credit_card_name,
+                              hasCardSummary: !!rec.card_summary,
+                              hasCardHighlights: !!rec.card_highlights,
+                              cardHighlights: rec.card_highlights,
+                              hasPerks: !!rec.perks,
+                              hasReason: !!rec.reason,
+                              fullRec: rec
+                            });
+                          }
+                          
                           const cardName = rec.credit_card_name;
+                          // Use a unique key based on card name and index to ensure proper React reconciliation
+                          const uniqueKey = `${cardName}-${recIndex}`;
                           const isOpen = openCardBoxes.has(recIndex);
                           
                           const benefits = extractBenefits(rec);
@@ -4533,7 +4608,7 @@ export default function Home() {
 
                           return (
                             <div
-                              key={recIndex}
+                              key={uniqueKey}
                               className={`${containerClasses} transition-all duration-300 overflow-hidden`}
                             >
                               {/* Collapsible Header */}
@@ -4560,27 +4635,37 @@ export default function Home() {
                               {isOpen && (
                                 <div className="px-4 pb-4 pt-2 space-y-2 animate-in slide-in-from-top-2 duration-200">
                                   {/* Card Summary at Top */}
-                                  {rec.card_summary && (
+                                  {rec.card_summary && String(rec.card_summary).trim().length > 0 && (
                                     <div className="pt-2">
                                       <p className="text-sm text-slate-600 md:text-muted-foreground md:leading-relaxed">
-                                        {rec.card_summary}
+                                        {String(rec.card_summary)}
                                       </p>
                                     </div>
                                   )}
                                   
-                                  {/* Card Highlights as Checkmarks */}
-                                  {rec.card_highlights && (
+                                  {/* Fallback: Show reason if card_summary is missing */}
+                                  {(!rec.card_summary || String(rec.card_summary).trim().length === 0) && rec.reason && String(rec.reason).trim().length > 0 && (
+                                    <div className="pt-2">
+                                      <p className="text-sm text-slate-600 md:text-muted-foreground md:leading-relaxed">
+                                        {String(rec.reason)}
+                                      </p>
+                                    </div>
+                                  )}
+                                  
+                                  {/* Card Highlights - ALWAYS show if it exists */}
+                                  {rec.card_highlights && String(rec.card_highlights).trim().length > 0 && (
                                     <div className="space-y-2 pt-1">
                                       <p className="text-xs font-semibold text-slate-500 md:text-muted-foreground uppercase md:tracking-wider mb-1">Key Benefits</p>
-                                      {rec.card_highlights
+                                      {String(rec.card_highlights)
                                         .split('\n')
                                         .map((highlight) => highlight.trim())
                                         .filter((highlight) => highlight.length > 0)
                                         .map((highlight, idx) => {
                                           // Remove bullet points (•, -, *, etc.) from the beginning of the text
                                           const cleanedHighlight = highlight.replace(/^[•\-\*\u2022\u2023\u25E6\u2043\u2219\s]+/, '').trim();
+                                          if (!cleanedHighlight) return null;
                                           return (
-                                            <div key={idx} className="flex items-start gap-3">
+                                            <div key={`${uniqueKey}-highlight-${idx}`} className="flex items-start gap-3">
                                               <div className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center mt-0.5">
                                                 <Check className="w-3 h-3 text-primary" strokeWidth={3} />
                                               </div>
@@ -4590,20 +4675,63 @@ export default function Home() {
                                         })}
                                     </div>
                                   )}
+                                  
+                                  {/* Fallback: Show perks or other benefits as checkmarks if card_highlights is missing */}
+                                  {(!rec.card_highlights || String(rec.card_highlights).trim().length === 0) && (rec.perks || benefits.length > 0) && (
+                                    <div className="space-y-2 pt-1">
+                                      <p className="text-xs font-semibold text-slate-500 md:text-muted-foreground uppercase md:tracking-wider mb-1">Key Benefits</p>
+                                      {(() => {
+                                        // Use perks if available, otherwise use extracted benefits
+                                        const hasPerks = rec.perks && String(rec.perks).trim().length > 0;
+                                        const benefitsToShow = hasPerks
+                                          ? String(rec.perks).split(/[.,;]/).map(p => p.trim()).filter(p => p.length > 0 && p.length < 150)
+                                          : benefits.filter(b => b.length > 0 && b.length < 150);
+                                        
+                                        return benefitsToShow.slice(0, 5).map((benefit, idx) => {
+                                          const cleanedBenefit = benefit.replace(/^[•\-\*\u2022\u2023\u25E6\u2043\u2219\s]+/, '').trim();
+                                          if (!cleanedBenefit) return null;
+                                          return (
+                                            <div key={`${uniqueKey}-benefit-${idx}`} className="flex items-start gap-3">
+                                              <div className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center mt-0.5">
+                                                <Check className="w-3 h-3 text-primary" strokeWidth={3} />
+                                              </div>
+                                              <p className="text-sm text-slate-700 md:text-muted-foreground md:leading-relaxed flex-1">{cleanedBenefit}</p>
+                                            </div>
+                                          );
+                                        });
+                                      })()}
+                                    </div>
+                                  )}
+                                  
                                   <div className="flex flex-wrap gap-2 pt-1">
                                     {rec.annual_fee && (
                                       <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-slate-700 border border-slate-200 shadow-sm">
-                                        {rec.annual_fee}
+                                        {String(rec.annual_fee)}
                                       </span>
                                     )}
                                     {rec.rewards_rate && (
                                       <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent/10 text-accent border border-accent/20">
-                                        {rec.rewards_rate}
+                                        {String(rec.rewards_rate)}
+                                      </span>
+                                    )}
+                                    {rec.intro_offer && (
+                                      <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-green-50 text-green-700 border border-green-200 shadow-sm">
+                                        {String(rec.intro_offer)}
+                                      </span>
+                                    )}
+                                    {rec.credit_score_needed && (
+                                      <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 shadow-sm">
+                                        {String(rec.credit_score_needed)}
+                                      </span>
+                                    )}
+                                    {rec.application_fee && (
+                                      <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200 shadow-sm">
+                                        {String(rec.application_fee)}
                                       </span>
                                     )}
                                   </div>
                                   <a
-                                    href={rec.apply_url}
+                                    href={rec.apply_url || '#'}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-primary to-primary/90 text-white px-6 py-3 text-sm font-semibold shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 hover:scale-105 active:scale-95 transition-all w-full"
@@ -4725,12 +4853,28 @@ export default function Home() {
                       </button>
                     ))}
                   </div>
+                  
+                  {/* Partner disclaimer below recommended questions - Desktop fixed input */}
+                  <div className="mt-4 px-4 py-2">
+                    <p className="text-xs text-slate-600 leading-relaxed text-center max-w-2xl mx-auto">
+                      Some of the credit cards on this site are from partners who pay us when you click or apply. This helps keep the site running, but it doesn't influence our recommendations.
+                    </p>
+                  </div>
                 </div>
               )}
             </div>
           </div>
         </div>
       )}
+      
+      {/* Site-wide disclaimer footer */}
+      <div className="relative z-10 border-t border-slate-200/60 bg-white/50 backdrop-blur-sm">
+        <div className="container mx-auto px-4 lg:px-6 max-w-7xl py-4 lg:py-5">
+          <p className="text-xs lg:text-sm text-slate-600 leading-relaxed text-center max-w-4xl mx-auto">
+            Some of the credit cards on this site are from partners who pay us when you click or apply. This helps keep the site running, but it doesn't influence our recommendations.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
