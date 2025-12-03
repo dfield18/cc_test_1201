@@ -41,13 +41,331 @@ const CHAT_MODEL = process.env.CHAT_MODEL || 'gpt-3.5-turbo';
 const TOP_N_CARDS = parseInt(process.env.TOP_N_CARDS || '8', 10); // Reduced to 8 for maximum speed
 
 /**
+ * Checks if a card has no annual fee - STRICT VERSION
+ * This is critical for "no annual fee" queries - be very strict
+ * Premium cards (Black Card, Executive, Platinum, etc.) are assumed to have fees if field is empty
+ * Checks annual_fee_score column first (0 = no fee), then annual_fee field
+ */
+function hasNoAnnualFeeStrict(card: any): boolean {
+  // FIRST: Check annual_fee_score column - this is the most reliable indicator
+  // If annual_fee_score is 0, the card has no annual fee
+  // If annual_fee_score is > 0, the card has an annual fee
+  const annualFeeScore = card.annual_fee_score;
+  if (annualFeeScore !== undefined && annualFeeScore !== null) {
+    const score = typeof annualFeeScore === 'string' ? parseFloat(annualFeeScore) : Number(annualFeeScore);
+    if (!isNaN(score)) {
+      if (score === 0) {
+        console.log(`[FEE CHECK] ${card.credit_card_name}: annual_fee_score=0 - NO FEE`);
+        return true;
+      } else {
+        console.log(`[FEE CHECK] ${card.credit_card_name}: annual_fee_score=${score} - HAS FEE`);
+        return false;
+      }
+    }
+  }
+  
+  // SECOND: Check both annual_fee and fee fields
+  const annualFee = String(card.annual_fee || card.fee || '').trim();
+  const annualFeeLower = annualFee.toLowerCase();
+  
+  // Log for debugging problematic cards
+  if (card.credit_card_name && (
+    card.credit_card_name.includes('Black Card') || 
+    card.credit_card_name.includes('AAdvantage') || 
+    card.credit_card_name.includes('Executive') ||
+    card.credit_card_name.includes('Ink Business Preferred') ||
+    card.credit_card_name.includes('Business Preferred')
+  )) {
+    console.log(`[FEE CHECK] Checking ${card.credit_card_name}: annual_fee="${annualFee}", annual_fee_score="${annualFeeScore}"`);
+  }
+  
+  // If empty or whitespace only, be CAREFUL - don't assume no fee
+  // Some cards might have missing data, so we need to check other indicators
+  if (!annualFee || annualFee === '' || annualFee === 'null' || annualFee === 'undefined') {
+    // If field is empty, check if card name or other fields indicate it's a premium/luxury card
+    const cardName = String(card.credit_card_name || '').toLowerCase();
+    const isPremiumCard = cardName.includes('black card') || 
+                         cardName.includes('platinum') || 
+                         cardName.includes('executive') ||
+                         cardName.includes('reserve') ||
+                         cardName.includes('prestige') ||
+                         cardName.includes('elite') ||
+                         cardName.includes('aadvantage executive') ||
+                         cardName.includes('world elite') ||
+                         cardName.includes('ink business preferred') ||
+                         cardName.includes('business preferred');
+    
+    if (isPremiumCard) {
+      console.log(`[FEE CHECK] Empty annual_fee but premium/business card name detected: ${card.credit_card_name} - assuming HAS fee`);
+      return false; // Premium/business cards typically have fees
+    }
+    
+    // For non-premium cards with empty fee, assume no fee (but log it)
+    console.log(`[FEE CHECK] Empty annual_fee for ${card.credit_card_name} - assuming no fee`);
+    return true;
+  }
+  
+  // Check for explicit "no fee" indicators
+  const noFeeIndicators = [
+    '0',
+    '$0',
+    '0.00',
+    '$0.00',
+    'no fee',
+    'no annual fee',
+    'none',
+    'n/a',
+    'na',
+    'free',
+    'zero',
+    '$0 annual fee',
+    '0 annual fee',
+    'waived',
+    'waived first year'
+  ];
+  
+  // Check if it matches any "no fee" indicator exactly
+  if (noFeeIndicators.includes(annualFeeLower)) {
+    return true;
+  }
+  
+  // Check if it contains "no fee" or "no annual fee" (case insensitive already handled)
+  if (annualFeeLower.includes('no fee') || annualFeeLower.includes('no annual fee')) {
+    return true;
+  }
+  
+  // Check if it's a number that equals 0 (handle formats like "0", "0.0", "0.00")
+  const numericFee = parseFloat(annualFee.replace(/[^0-9.]/g, ''));
+  if (!isNaN(numericFee)) {
+    if (numericFee === 0) {
+      return true;
+    } else {
+      // Any positive number means it HAS a fee
+      console.log(`[FEE CHECK] ${card.credit_card_name} has numeric fee: ${numericFee} - HAS FEE`);
+      return false;
+    }
+  }
+  
+  // If it contains a dollar amount, check if it's $0
+  if (annualFee.includes('$')) {
+    const dollarAmount = parseFloat(annualFee.replace(/[^0-9.]/g, ''));
+    if (!isNaN(dollarAmount)) {
+      if (dollarAmount === 0) {
+        return true;
+      } else {
+        // Any positive dollar amount means it HAS a fee
+        console.log(`[FEE CHECK] ${card.credit_card_name} has dollar fee: $${dollarAmount} - HAS FEE`);
+        return false;
+      }
+    }
+  }
+  
+  // If we can't determine, and it's a premium card, assume it has a fee
+  const cardName = String(card.credit_card_name || '').toLowerCase();
+  const isPremiumCard = cardName.includes('black card') || 
+                       cardName.includes('platinum') || 
+                       cardName.includes('executive') ||
+                       cardName.includes('reserve') ||
+                       cardName.includes('prestige') ||
+                       cardName.includes('elite') ||
+                       cardName.includes('aadvantage executive') ||
+                       cardName.includes('world elite') ||
+                       cardName.includes('ink business preferred') ||
+                       cardName.includes('business preferred');
+  
+  if (isPremiumCard) {
+    console.log(`[FEE CHECK] ${card.credit_card_name} is premium/business card with unclear fee format "${annualFee}" - assuming HAS fee`);
+    return false;
+  }
+  
+  // If we can't parse it and it's not clearly "no fee", assume it HAS a fee to be safe
+  console.log(`[FEE CHECK] ${card.credit_card_name} has unclear fee format "${annualFee}" - assuming HAS fee to be safe`);
+  return false;
+}
+
+/**
+ * Generates a personalized reason for a card based on card data and user query
+ * This avoids generic phrases like "This card matches your criteria"
+ * Uses specific card features to create unique descriptions
+ */
+function generatePersonalizedReason(card: any, userQuery: string): string {
+  const queryLower = userQuery.toLowerCase();
+  const reasons: string[] = [];
+  
+  // Extract keywords from user query
+  const isTravelQuery = /travel|flight|hotel|airport|lounge|trip|vacation|miles/.test(queryLower);
+  const isDiningQuery = /dining|restaurant|food|eat|meal/.test(queryLower);
+  const isCashBackQuery = /cash.?back|cashback|cash back/.test(queryLower);
+  const isNoFeeQuery = /no annual fee|no fee|zero fee|free/.test(queryLower);
+  const isBusinessQuery = /business|company|corporate/.test(queryLower);
+  const isGroceriesQuery = /grocery|groceries|supermarket|food store/.test(queryLower);
+  const isGasQuery = /gas|fuel|gas station|petrol/.test(queryLower);
+  const isStudentQuery = /student|college|university/.test(queryLower);
+  const isLuxuryQuery = /luxury|premium|elite|exclusive/.test(queryLower);
+  
+  // Get specific card data
+  const rewardsRate = String(card.rewards_rate || card.rewards || card.reward_rate || '').trim();
+  const annualFee = String(card.annual_fee || card.fee || '').trim();
+  const welcomeBonus = String(card.intro_offer || card.welcome_bonus || card.sign_up_bonus || card.intro_bonus || '').trim();
+  const perks = String(card.perks || card.benefits || card.card_perks || '').toLowerCase();
+  const cardSummary = String(card.card_summary || '').toLowerCase();
+  const targetConsumer = String(card.target_consumer || '').toLowerCase();
+  
+  // Build reason based on card features and query - prioritize specific data
+  if (rewardsRate) {
+    const rewardsLower = rewardsRate.toLowerCase();
+    if (isTravelQuery && (rewardsLower.includes('travel') || rewardsLower.includes('miles') || rewardsLower.includes('points'))) {
+      reasons.push(`Earns ${rewardsRate} on travel purchases`);
+    } else if (isDiningQuery && (rewardsLower.includes('dining') || rewardsLower.includes('restaurant'))) {
+      reasons.push(`Earns ${rewardsRate} on dining`);
+    } else if (isCashBackQuery && rewardsLower.includes('cash')) {
+      reasons.push(`Offers ${rewardsRate} cash back`);
+    } else if (isGroceriesQuery && rewardsLower.includes('grocery')) {
+      reasons.push(`Earns ${rewardsRate} on groceries`);
+    } else if (isGasQuery && rewardsLower.includes('gas')) {
+      reasons.push(`Earns ${rewardsRate} on gas purchases`);
+    } else if (rewardsRate) {
+      reasons.push(`Earns ${rewardsRate} rewards`);
+    }
+  }
+  
+  // Add annual fee info if relevant
+  if (isNoFeeQuery && (annualFee === '0' || annualFee === '$0' || annualFee.toLowerCase().includes('no fee'))) {
+    reasons.push('No annual fee');
+  }
+  
+  // Add welcome bonus if available and specific (but skip if it's "None", "N/A", or empty)
+  const welcomeBonusLower = welcomeBonus.toLowerCase().trim();
+  const isNoneOrEmpty = !welcomeBonus || welcomeBonusLower === 'none' || welcomeBonusLower === 'n/a' || welcomeBonusLower === 'na' || welcomeBonusLower === '';
+  if (!isNoneOrEmpty && welcomeBonus.length > 0 && welcomeBonus.length < 50) {
+    // Extract numbers from welcome bonus (e.g., "50,000 points", "$500", "5%")
+    const bonusMatch = welcomeBonus.match(/(\$?\d{1,3}(?:,\d{3})*(?:\.\d+)?|(?:\d+%))/);
+    if (bonusMatch) {
+      reasons.push(`${welcomeBonus.substring(0, 40)} welcome bonus`);
+    }
+  }
+  
+  // Add specific perks
+  if (isTravelQuery && perks.includes('lounge')) {
+    reasons.push('Airport lounge access');
+  }
+  if (isTravelQuery && (perks.includes('insurance') || perks.includes('protection'))) {
+    reasons.push('Travel insurance');
+  }
+  if (perks.includes('concierge')) {
+    reasons.push('Concierge service');
+  }
+  if (perks.includes('priority pass') || perks.includes('lounge pass')) {
+    reasons.push('Lounge membership');
+  }
+  
+  // Add target consumer info
+  if (isBusinessQuery && (targetConsumer.includes('business') || cardSummary.includes('business'))) {
+    reasons.push('Business-focused benefits');
+  }
+  if (isStudentQuery && (targetConsumer.includes('student') || cardSummary.includes('student'))) {
+    reasons.push('Student-friendly');
+  }
+  
+  // If we have specific reasons, combine them (max 2)
+  if (reasons.length > 0) {
+    return reasons.slice(0, 2).join(' with ');
+  }
+  
+  // Fallback: use specific features from the card - be more specific
+  // Only mention welcome bonus if it exists and is not "None" or empty
+  // Reuse the variables already declared above
+  if (!isNoneOrEmpty && welcomeBonus.length > 0) {
+    // Try to extract the actual bonus amount
+    const bonusText = welcomeBonus.length > 35 ? welcomeBonus.substring(0, 35) + '...' : welcomeBonus;
+    if (rewardsRate) {
+      return `${bonusText} welcome bonus with ${rewardsRate} rewards`;
+    }
+    return `${bonusText} welcome bonus`;
+  }
+  
+  if (rewardsRate) {
+    return `Earns ${rewardsRate} on purchases`;
+  }
+  
+  // Use specific perks if available
+  if (perks.length > 0) {
+    // Extract first meaningful perk (skip generic words)
+    const perkWords = perks.split(/[.,;]/)
+      .map(p => p.trim())
+      .filter(p => p.length > 10 && p.length < 60 && 
+        !p.includes('and') && !p.includes('the') && !p.includes('with'))
+      .slice(0, 1);
+    if (perkWords.length > 0) {
+      return perkWords[0].charAt(0).toUpperCase() + perkWords[0].slice(1);
+    }
+  }
+  
+  // Use annual fee info if available
+  if (annualFee && annualFee !== '0' && annualFee !== '$0') {
+    if (rewardsRate) {
+      return `${rewardsRate} rewards with ${annualFee} annual fee`;
+    }
+    return `${annualFee} annual fee with premium benefits`;
+  }
+  
+  if (annualFee === '0' || annualFee === '$0') {
+    if (rewardsRate) {
+      return `No annual fee with ${rewardsRate} rewards`;
+    }
+    return 'No annual fee with rewards';
+  }
+  
+  // Use card summary if available (truncate intelligently)
+  if (card.card_summary && card.card_summary.length > 0) {
+    const summary = String(card.card_summary);
+    // Take first sentence or first 50 chars
+    const firstSentence = summary.split(/[.!?]/)[0].trim();
+    if (firstSentence.length > 15 && firstSentence.length < 70) {
+      return firstSentence;
+    }
+    const truncated = summary.substring(0, 55).trim();
+    return truncated.endsWith('.') ? truncated : truncated + '...';
+  }
+  
+  // Last resort: use card name to infer type
+  const cardName = String(card.credit_card_name || '').toLowerCase();
+  if (cardName.includes('travel') || cardName.includes('miles')) {
+    return 'Travel rewards and benefits';
+  }
+  if (cardName.includes('cash') || cardName.includes('cashback')) {
+    return 'Cash back rewards';
+  }
+  if (cardName.includes('business')) {
+    return 'Business rewards and benefits';
+  }
+  if (cardName.includes('student')) {
+    return 'Student-friendly rewards';
+  }
+  
+  // Absolute last resort - but make it card-specific
+  return 'Rewards program with valuable benefits';
+}
+
+/**
  * Formats candidate cards for the LLM context
  * Ultra-compact format for maximum speed
+ * When isNoFeeQuery is true, highlights annual_fee prominently
  */
-function formatCardsForContext(cards: CardEmbedding[]): string {
+function formatCardsForContext(cards: CardEmbedding[], isNoFeeQuery: boolean = false): string {
   return cards
     .map((cardEmbedding, index) => {
       const card = cardEmbedding.card;
+      const annualFee = String(card.annual_fee || card.fee || '').trim();
+      
+      // For "no annual fee" queries, make annual_fee very prominent
+      if (isNoFeeQuery) {
+        const feeDisplay = annualFee || 'Not specified';
+        const text = cardToText(card);
+        return `${index + 1}. ${card.credit_card_name} | annual_fee: ${feeDisplay} | ${text} | ${card.url_application}`;
+      }
+      
+      // Normal format
       const text = cardToText(card);
       return `${index + 1}. ${card.credit_card_name} | ${text} | ${card.url_application}`;
     })
@@ -248,6 +566,13 @@ Return JSON: {
   "apply_url": "application URL from the data"
 }
 
+PERSONALIZATION REQUIREMENTS:
+- Reference specific aspects of the user's question when providing information
+- If the user asks about specific features (travel, dining, cash back, etc.), emphasize those aspects of the card
+- Provide concrete, specific details rather than generic statements
+- Avoid phrases like "This card matches your criteria" - instead state the actual features and benefits directly
+- Make the response feel tailored to what the user specifically asked about
+
 IMPORTANT: 
 - Include ALL relevant information about this specific card
 - Do NOT mention or compare to any other cards
@@ -267,7 +592,7 @@ IMPORTANT:
   
   messages.push({
     role: 'user',
-    content: `User question: ${userQuery}\n\nCard information:\n${cardContext}\n\nProvide detailed information about this card based on the user's question.`,
+    content: `User question: ${userQuery}\n\nCard information:\n${cardContext}\n\nProvide detailed information about this card based on the user's question. Reference specific aspects of what they asked about and provide concrete details. Avoid generic phrases - focus on actual features, benefits, and details that directly address their question.`,
   });
   
   try {
@@ -746,7 +1071,7 @@ async function generateResponseAboutPreviousCards(
       content: `You are a helpful credit card assistant. The user is asking a question about cards that were ALREADY shown to them. Answer their question by ONLY referencing these specific cards. Do NOT mention or recommend any other cards.
 
 Return JSON: {
-  "summary": "A COMPLETE markdown-formatted response that FULLY answers the user's question. You MUST include:\n1. A direct answer to the user's question\n2. Specific information for EACH card that matches the criteria (if asking about features/requirements)\n3. Use markdown links: [Card Name](application_url) for each card mentioned\n4. Provide ALL relevant details - do NOT just say you're going to answer, actually provide the complete answer\n5. If asking about requirements (like credit scores), list the specific requirement for EACH card\n6. If asking about features, list which cards have those features with details\n\nCRITICAL: Your response must be a COMPLETE answer, not just an introduction. Include all the information the user asked for. If no cards match, say so clearly.\n\nEXAMPLE of a COMPLETE answer:\nIf asked \"What are the credit score requirements for these cards?\", provide:\n\"Here are the credit score requirements for the previously shown cards:\n\n- **[Chase Sapphire Preferred](url)**: Requires a credit score of 690 or higher\n- **[Capital One Venture](url)**: Requires a credit score of 700 or higher\n- **[American Express Gold](url)**: Requires a credit score of 670 or higher\"\n\nNOT just: \"Here are the credit score requirements for the previously shown cards:\"",
+  "summary": "A COMPLETE markdown-formatted response that FULLY answers the user's question. You MUST include:\n1. A direct answer to the user's question\n2. Specific information for EACH card that matches the criteria (if asking about features/requirements)\n3. Use markdown links: [Card Name](application_url) for each card mentioned\n4. Provide ALL relevant details - do NOT just say you're going to answer, actually provide the complete answer\n5. If asking about requirements (like credit scores), list the specific requirement for EACH card\n6. If asking about features, list which cards have those features with details\n\nCRITICAL: Your response must be a COMPLETE answer, not just an introduction. Include all the information the user asked for. If no cards match, say so clearly.\n\nPERSONALIZATION: Reference specific details from the user's question and provide concrete, specific information. Avoid generic phrases like "This card matches your criteria" or "This card has the features you need." Instead, state the actual features, requirements, or benefits directly.\n\nEXAMPLE of a COMPLETE answer:\nIf asked \"What are the credit score requirements for these cards?\", provide:\n\"Here are the credit score requirements for the previously shown cards:\n\n- **[Chase Sapphire Preferred](url)**: Requires a credit score of 690 or higher\n- **[Capital One Venture](url)**: Requires a credit score of 700 or higher\n- **[American Express Gold](url)**: Requires a credit score of 670 or higher\"\n\nNOT just: \"Here are the credit score requirements for the previously shown cards:\"",
   "cards": [] // Empty array - we're not showing new cards, just answering about existing ones
 }
 
@@ -766,7 +1091,7 @@ IMPORTANT: Only reference the cards provided. Do not suggest new cards.`,
   
   messages.push({
     role: 'user',
-    content: `User question: ${userQuery}\n\nPreviously shown cards:\n${cardsContext}\n\nProvide a COMPLETE answer to the user's question. Include all relevant details for each card. Do NOT just introduce your answer - provide the full information the user requested. Use markdown links [Card Name](application_url) for each card you mention.`,
+    content: `User question: ${userQuery}\n\nPreviously shown cards:\n${cardsContext}\n\nProvide a COMPLETE answer to the user's question. Include all relevant details for each card. Do NOT just introduce your answer - provide the full information the user requested. Use markdown links [Card Name](application_url) for each card you mention.\n\nPERSONALIZATION: Reference specific aspects of the user's question and provide concrete, specific details. Avoid generic phrases - instead state actual features, requirements, benefits, or details directly. Make the response feel tailored to what the user specifically asked about.`,
   });
   
   try {
@@ -1128,10 +1453,50 @@ export async function generateRecommendations(
       }
     }
     
-    // Step 3.6: Prioritize top_card cards (cards with top_card === 1)
-    // Sort allCandidateCards to put top_card cards first, but keep similarity order within each group
-    const topCards = allCandidateCards.filter(card => isTopCard(card.card));
-    const nonTopCards = allCandidateCards.filter(card => !isTopCard(card.card));
+    // Step 3.6: Filter cards based on specific query requirements (e.g., "no annual fee")
+    const queryLower = userQuery.toLowerCase();
+    const isNoFeeQuery = /no annual fee|no fee|zero fee|free annual fee|\$0 annual fee/.test(queryLower);
+    
+    let filteredCandidateCards = [...allCandidateCards];
+    
+    if (isNoFeeQuery) {
+      console.log('User asked for cards with no annual fee, filtering out cards with annual fees...');
+      const beforeCount = filteredCandidateCards.length;
+      
+      // Use the shared strict function
+      const hasNoAnnualFee = hasNoAnnualFeeStrict;
+      
+      // Filter out cards that have an annual fee
+      filteredCandidateCards = filteredCandidateCards.filter(card => {
+        const hasNoFee = hasNoAnnualFee(card.card);
+        
+        if (!hasNoFee) {
+          const annualFee = String(card.card.annual_fee || card.card.fee || '').trim();
+          console.log(`Filtered out card with annual fee: ${card.card.credit_card_name} (annual_fee: "${annualFee}")`);
+        }
+        return hasNoFee;
+      });
+      
+      const afterCount = filteredCandidateCards.length;
+      console.log(`Filtered from ${beforeCount} to ${afterCount} cards (removed ${beforeCount - afterCount} cards with annual fees)`);
+      
+      if (filteredCandidateCards.length === 0) {
+        console.error('CRITICAL: No cards with no annual fee found in candidate list after filtering!');
+        console.error('This means all candidate cards have annual fees. We should NOT show cards with fees.');
+        console.error('Sample of filtered cards and their annual fees:');
+        allCandidateCards.slice(0, 5).forEach(card => {
+          const annualFee = String(card.card.annual_fee || card.card.fee || '').trim();
+          console.error(`  - ${card.card.credit_card_name}: annual_fee = "${annualFee}"`);
+        });
+        // DO NOT fall back to showing cards with fees - this would violate the user's request
+        // Instead, we'll let the system continue with empty list and handle it gracefully
+      }
+    }
+    
+    // Step 3.7: Prioritize top_card cards (cards with top_card === 1)
+    // Sort filteredCandidateCards to put top_card cards first, but keep similarity order within each group
+    const topCards = filteredCandidateCards.filter(card => isTopCard(card.card));
+    const nonTopCards = filteredCandidateCards.filter(card => !isTopCard(card.card));
     const prioritizedSimilarCards = [...topCards, ...nonTopCards];
     
     if (topCards.length > 0) {
@@ -1139,14 +1504,23 @@ export async function generateRecommendations(
     }
     
     // Step 4: Format context for LLM (use prioritized cards)
-    const context = formatCardsForContext(prioritizedSimilarCards);
+    const context = formatCardsForContext(prioritizedSimilarCards, isNoFeeQuery);
     
     // Step 5: Call LLM with RAG context
     console.log('Calling LLM for recommendations...');
     // Prompt that generates a conversational, markdown-formatted response with structured card listings
     const systemPrompt = `You are a credit card recommendation assistant. You MUST return valid JSON with exactly this structure:
+
+CRITICAL FORMAT REQUIREMENT: Each card in the summary MUST follow this EXACT format:
+- **[Card Name](url)** - description (5-15 words). [Connecting sentence - at least 5 words]
+
+You MUST:
+1. Use markdown link format **[Card Name](url)** for EVERY card - NEVER use plain text
+2. Include a connecting sentence (at least 5 words) after EVERY card description
+3. Make each description and connecting sentence UNIQUE - never repeat the same phrase
+
 {
-  "summary": "A markdown-formatted response with:\n1. ONE sentence preface introducing the recommendations\n2. Three cards listed, each on its own line with format: - **[Card Name](url)** - brief description (5-15 words)\n3. Each card description should explain how it addresses the user's question/need\n\nFormat example:\nBased on your needs, here are three credit cards that could work well for you.\n\n- **[Chase Sapphire Preferred](https://example.com)** - Earns 2x points on travel and dining with a generous welcome bonus\n- **[Capital One Venture](https://example.com)** - Simple flat-rate rewards perfect for frequent travelers\n- **[Amex Gold Card](https://example.com)** - Excellent for dining and groceries with 4x points on both",
+  "summary": "A markdown-formatted response with:\n1. ONE sentence preface introducing the recommendations\n2. Three cards listed, each on its own line with format: - **[Card Name](url)** - brief description (5-15 words). [ONE unique sentence (at least 5 words) connecting this card to the user's specific question]\n3. Each card must have a COMPLETELY UNIQUE description and connecting sentence - never repeat the same phrase or structure\n\nFormat example:\nBased on your travel needs, here are three credit cards that could work well for you.\n\n- **[Chase Sapphire Preferred](https://example.com)** - Earns 2x points on travel and dining with a generous welcome bonus. This card is perfect if you frequently book flights and hotels, as you'll earn double points on those purchases.\n- **[Capital One Venture](https://example.com)** - Simple flat-rate rewards perfect for frequent travelers. The straightforward 2x miles on every purchase makes it ideal for travelers who want simplicity without tracking categories.\n- **[Amex Gold Card](https://example.com)** - Excellent for dining and groceries with 4x points on both. If you spend a lot on restaurants and grocery stores, this card maximizes your rewards in those everyday categories.",
   "cards": [
     {"credit_card_name": "Exact card name from candidate cards", "apply_url": "URL from candidate cards", "reason": "Brief 5-15 word description of how this card addresses the user's question/need", "card_summary": "A concise 1-2 sentence summary of this card's key value proposition", "card_highlights": "Highlight 1\\nHighlight 2\\nHighlight 3"},
     {"credit_card_name": "Another card name", "apply_url": "Another URL", "reason": "Brief 5-15 word description", "card_summary": "Summary text", "card_highlights": "Highlight 1\\nHighlight 2\\nHighlight 3"},
@@ -1154,19 +1528,39 @@ export async function generateRecommendations(
   ]
 }
 
+CRITICAL: Each card's description AND connecting sentence must be UNIQUE and conversational. Never repeat the same phrase or structure for multiple cards. 
+
+REQUIRED FORMAT: Each card must have:
+1. A unique description (5-15 words) highlighting what makes that card distinctive
+2. A unique connecting sentence that references the user's question in a different way than the other cards
+
+SPECIAL RULE FOR SHARED FEATURES: When multiple cards share a common feature (like "no annual fee" when the user asks for "cards with no annual fee"), mention that shared feature in the preface sentence, NOT in each individual card description or connecting sentence. Each card description and connecting sentence must highlight what makes THAT SPECIFIC CARD unique and different from the others. For example, if all three cards have no annual fee, don't say "No annual fee" for each one - instead focus on their unique rewards, perks, or other distinctive features, and vary how you connect each card to the user's needs.
+
+If a card doesn't have a welcome bonus (intro_offer/welcome_bonus is empty, null, "None", or "N/A"), do NOT mention welcome bonuses - focus on other unique features instead.
+
 CRITICAL REQUIREMENTS: 
-- The "cards" array MUST contain exactly 3 cards (no more, no less)
+- The "cards" array MUST contain exactly 3 cards (no more, no less)${isNoFeeQuery ? ' - BUT ONLY if there are at least 3 cards with no annual fee. If fewer, select only the cards with no annual fee.' : ''}
 - Use EXACT card names from the candidate cards provided
 - Use EXACT URLs from the candidate cards provided
+${isNoFeeQuery ? '- BEFORE selecting any card, check its annual_fee field in the candidate cards data. ONLY select cards where annual_fee is: 0, $0, "no fee", "none", empty, or any variation indicating no fee. DO NOT select cards with any annual fee amount.\n' : ''}
 - The summary MUST follow this exact format:
   1. ONE sentence preface (no more, no less)
   2. Blank line
-  3. Three cards, each on its own line: - **[Card Name](url)** - description (5-15 words)
+  3. Three cards, each on its own line: - **[Card Name](url)** - description (5-15 words). [ONE unique sentence connecting this card to the user's specific question]${isNoFeeQuery ? ' (all must have no annual fee)' : ''}
   4. Each card description must explain how it addresses the user's specific question/need
+  5. Each card MUST have a unique connecting sentence that references the user's question in a different way
 - The card name appears ONLY ONCE - inside the markdown link [Card Name](url), wrapped in bold **
 - DO NOT repeat card names anywhere else
 - Keep descriptions concise: 5-15 words per card
-- Make it conversational and warm`;
+- Make it conversational and warm
+
+PERSONALIZATION REQUIREMENTS (CRITICAL):
+- ALWAYS reference specific details from the user's question (e.g., if they mention "travel", "dining", "cash back", "no annual fee", etc.)
+- Use specific, concrete benefits that directly relate to what the user asked about
+- AVOID generic phrases like "This card matches your criteria", "This card matches your needs", "This card matches your criteria based on its features", or similar vague statements
+- Each description should be UNIQUE and highlight DIFFERENT aspects of why that specific card fits the user's needs
+- Reference specific features, rewards rates, or benefits mentioned in the card data that align with the user's query
+- Make each description feel tailored and specific, not generic or templated`;
 
     // Build conversation history for context
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
@@ -1190,34 +1584,170 @@ CRITICAL REQUIREMENTS:
 Candidate cards:
 ${context}
 
+${isNoFeeQuery ? `\nCRITICAL: The user specifically asked for cards with NO ANNUAL FEE. 
+
+IMPORTANT INSTRUCTIONS:
+1. Look at the "annual_fee" field for EACH card in the candidate list above
+2. You MUST ONLY select cards where annual_fee is: 0, $0, "no fee", "none", "N/A", empty, or any variation indicating no fee
+3. DO NOT select any cards that have an annual fee (any number > 0, any dollar amount > $0, or any text indicating a fee exists)
+4. If a card's annual_fee field shows a number like 95, 99, 195, 550, etc., or shows "$95", "$99", "$195", "$550", etc., that card HAS an annual fee and MUST NOT be selected
+5. If there are not enough cards with no annual fee in the candidate list, select only the ones that meet this requirement (even if fewer than 3)
+
+Check the annual_fee field carefully for each card before selecting it.
+
+CRITICAL FOR DESCRIPTIONS: Since the user asked for cards with no annual fee, ALL selected cards will have no annual fee. Therefore:
+- Mention "no annual fee" in your preface sentence (e.g., "When it comes to credit cards with no annual fee...")
+- DO NOT repeat "no annual fee" or "No annual fee" in each individual card description OR connecting sentence
+- Each card description must highlight what makes THAT CARD UNIQUE - focus on rewards rates, perks, target audience, or other distinctive features
+- Each connecting sentence must reference the user's question ("no annual fee") but in a UNIQUE way - vary how you connect it to their needs
+- Example descriptions: "Up to 15% cash back at partner merchants" or "Helps build credit with responsible use reporting" or "Cash back rewards with transparent credit building"
+- Example connecting sentences (each different): "This card stands out for its exceptional cash back rate..." or "This card is designed specifically for building credit..." or "This card offers a unique approach to credit building..."
+
+\n` : ''}
+
 ${topCards.length > 0 ? `\nIMPORTANT: Some cards in the candidate list are marked as top recommendations (top_card = 1). When possible, try to include at least one of these top cards in your recommendations if they match the user's needs. However, prioritize relevance to the user's question above all else.\n` : ''}
 
-Create a markdown-formatted response with this EXACT structure:
+═══════════════════════════════════════════════════════════════════════════════
+CRITICAL FORMAT REQUIREMENTS - READ CAREFULLY:
+═══════════════════════════════════════════════════════════════════════════════
+
+YOU MUST FOLLOW THIS EXACT FORMAT FOR EACH CARD:
+- **[Card Name](url)** - description (5-15 words). [Connecting sentence - at least 5 words]
+
+REQUIREMENTS:
+1. ALWAYS use markdown link format: **[Card Name](url)** - NEVER plain text
+2. ALWAYS include a connecting sentence (at least 5 words) after each description
+3. Each description and connecting sentence MUST be unique - never repeat phrases
+4. If cards share a feature (like "no annual fee"), mention it ONLY in the preface
+
+WRONG FORMAT (DO NOT DO THIS):
+- Firstcard® Secured Credit Builder Card with Cashback - Up to 15% cash back
+- BankAmericard® Secured - No annual fee
+- Petal 1 "No Annual Fee" Visa - No annual fee
+
+CORRECT FORMAT (DO THIS):
+- **[Firstcard® Secured Credit Builder Card](url)** - Up to 15% cash back at partner merchants. This card stands out for its exceptional cash back rate at select merchants, making it ideal if you shop at their partner stores regularly.
+- **[BankAmericard® Secured](url)** - Helps build credit with responsible use reporting. This card is designed specifically for building or rebuilding credit, reporting your payment history to all three major credit bureaus.
+- **[Petal 1 "No Annual Fee" Visa](url)** - Cash back rewards with transparent credit building features. This card offers a unique approach to credit building with cash back rewards and clear, upfront terms that help you understand your progress.
+
+═══════════════════════════════════════════════════════════════════════════════
+
+Create a markdown-formatted response with this EXACT structure (YOU MUST FOLLOW THIS FORMAT EXACTLY):
 
 1. ONE sentence preface that introduces the recommendations (acknowledge the user's question/need)
 2. Blank line
-3. Three cards, each on its own line with this format:
-   - **[Card Name](url)** - brief description (5-15 words explaining how this card addresses the user's question/need)
+3. Three cards, each on its own line with this EXACT format:
+   - **[Card Name](url)** - brief description (5-15 words). [ONE unique sentence (at least 5 words) that connects this specific card to the user's question in a different way than the other cards]
+
+CRITICAL FORMAT REQUIREMENTS:
+- Each card line MUST start with "- **" followed by the card name in markdown link format
+- Each card MUST have a description (5-15 words) after the link
+- Each card MUST have a connecting sentence (at least 5 words) after the description, separated by a period
+- The connecting sentence MUST reference the user's question but in a unique way for each card
+- DO NOT use plain text card names - always use markdown link format: **[Card Name](url)**
+- DO NOT skip the connecting sentence - it is REQUIRED for each card
 
 EXAMPLE FORMAT:
 Based on your travel needs, here are three credit cards that could work well for you.
 
-- **[Chase Sapphire Preferred](https://chase.com/sapphire)** - Earns 2x points on travel and dining with a generous welcome bonus
-- **[Capital One Venture](https://capitalone.com/venture)** - Simple flat-rate rewards perfect for frequent travelers  
-- **[Amex Gold Card](https://amex.com/gold)** - Excellent for dining and groceries with 4x points on both
+- **[Chase Sapphire Preferred](https://chase.com/sapphire)** - Earns 2x points on travel and dining with a generous welcome bonus. This card is perfect if you frequently book flights and hotels, as you'll earn double points on those purchases.
+- **[Capital One Venture](https://capitalone.com/venture)** - Simple flat-rate rewards perfect for frequent travelers. The straightforward 2x miles on every purchase makes it ideal for travelers who want simplicity without tracking categories.
+- **[Amex Gold Card](https://amex.com/gold)** - Excellent for dining and groceries with 4x points on both. If you spend a lot on restaurants and grocery stores, this card maximizes your rewards in those everyday categories.
 
-CRITICAL RULES:
+EXAMPLE FORMAT (when cards don't have welcome bonuses and share "no annual fee"):
+When it comes to credit cards with no annual fee, here are three top recommendations for you.
+
+- **[Firstcard® Secured Credit Builder Card](https://example.com)** - Up to 15% cash back at partner merchants. This card stands out for its exceptional cash back rate at select merchants, making it ideal if you shop at their partner stores regularly.
+- **[BankAmericard® Secured](https://example.com)** - Helps build credit with responsible use reporting. This card is designed specifically for building or rebuilding credit, reporting your payment history to all three major credit bureaus.
+- **[Petal 1 "No Annual Fee" Visa](https://example.com)** - Cash back rewards with transparent credit building features. This card offers a unique approach to credit building with cash back rewards and clear, upfront terms that help you understand your progress.
+
+CRITICAL: Notice in the example above:
+1. Each card uses markdown link format: **[Card Name](url)** - NOT plain text
+2. Each card has a UNIQUE description highlighting different features (NOT "No annual fee")
+3. Each card has a UNIQUE connecting sentence (at least 5 words) that references the user's question in a different way
+4. The shared "no annual fee" feature is mentioned ONLY in the preface, NOT in any card description or connecting sentence
+5. Each connecting sentence is a complete sentence that connects the card to the user's needs
+
+WRONG FORMAT (DO NOT DO THIS):
+- Firstcard® Secured Credit Builder Card with Cashback - Up to 15% cash back at partner merchants
+- BankAmericard® Secured - No annual fee
+- Petal 1 "No Annual Fee" Visa - No annual fee
+
+This is wrong because:
+- Missing markdown link format
+- Missing connecting sentences
+- Repeating "No annual fee" for multiple cards
+
+CRITICAL RULES (YOU MUST FOLLOW THESE EXACTLY):
 - Card name appears ONLY ONCE: inside the markdown link [Card Name](url), wrapped in bold **
+- ALWAYS use markdown link format: **[Card Name](url)** - NEVER use plain text card names
 - Each description must be 5-15 words
 - Each description must explain how the card addresses the user's specific question/need
+- After each description, you MUST add ONE unique sentence (at least 5 words) that connects this specific card to the user's question in a different way than the other cards
+- The connecting sentence is REQUIRED - do not skip it
 - Use EXACT card names and URLs from the candidate cards provided
 - DO NOT repeat card names outside the link
 - DO NOT add closing sentences or additional text after the three cards
+- If multiple cards share a feature (like "no annual fee"), mention it in the preface sentence, NOT in each card description or connecting sentence
+- Each card description AND connecting sentence must highlight what makes THAT CARD UNIQUE - focus on distinctive features, not shared ones
+- NEVER use the same phrase or structure for multiple cards (e.g., don't say "No annual fee" for all three cards)
+- Each connecting sentence must reference the user's question but in a UNIQUE way - vary the phrasing, focus, and angle for each card
+- Each connecting sentence must be a complete, conversational sentence (at least 5 words) that explains why this card fits the user's needs
+
+PERSONALIZATION REQUIREMENTS (CRITICAL - AVOID GENERIC RESPONSES):
+- Analyze the user's question carefully and identify specific keywords, needs, or preferences they mentioned (e.g., "travel", "dining", "cash back", "no annual fee", "business", "luxury", "beginner", etc.)
+- For each card description, reference SPECIFIC features, rewards rates, or benefits from the card data that directly address what the user asked about
+- NEVER use generic phrases like:
+  * "This card matches your criteria"
+  * "This card matches your needs"
+  * "This card matches your criteria based on its features"
+  * "This card is a good fit"
+  * "This card addresses your question"
+  * "None welcome bonus" or "No welcome bonus"
+  * Any variation of these generic statements
+- Instead, use SPECIFIC, CONCRETE descriptions like:
+  * "Earns 3x points on travel purchases with no foreign transaction fees"
+  * "Offers 5% cash back on groceries and streaming services"
+  * "No annual fee with 2% cash back on all purchases"
+  * "Premium travel benefits including airport lounge access and travel insurance"
+- Make each card's description UNIQUE - highlight different aspects that make each card valuable for the user's specific needs
+- Reference actual rewards rates, benefits, or features from the candidate card data that align with the user's query
+- The description should feel like it was written specifically for this user's question, not a template
+- If a card doesn't have a welcome bonus (intro_offer/welcome_bonus is empty, null, "None", or "N/A"), simply don't mention welcome bonuses - focus on other features instead
+- Vary your language and sentence structure for each card to make responses feel more conversational and natural
+- CRITICAL: When the user asks for cards with a shared feature (like "no annual fee"), mention that feature in the preface sentence, NOT in each individual card description or connecting sentence. Each card description AND connecting sentence should highlight what makes THAT CARD unique and different from the others
+- REQUIRED: Each card must have a connecting sentence after the description that references the user's question in a unique way - vary the angle, focus, and wording for each card
 
 For each card in the "cards" array, include:
-- "reason": Brief 5-15 word description of how this card addresses the user's question/need
+- "reason": Brief 5-15 word description that SPECIFICALLY explains how this card addresses the user's question/need (avoid generic phrases)
 - "card_summary": A concise 1-2 sentence summary of the card's key value proposition
 - "card_highlights": A newline-separated list of 3-5 key highlights/benefits (one per line, no bullets or dashes)
+
+CRITICAL REQUIREMENTS FOR EACH CARD'S REASON:
+- Each card MUST have a COMPLETELY UNIQUE reason that highlights DIFFERENT aspects or benefits
+- Do NOT use the same or similar phrasing for multiple cards - each reason must be DISTINCT
+- Card 1 reason should focus on one specific benefit (e.g., "Earns 3x points on travel with no foreign transaction fees")
+- Card 2 reason should focus on a DIFFERENT benefit (e.g., "5% cash back on groceries and streaming services")
+- Card 3 reason should highlight yet ANOTHER unique aspect (e.g., "No annual fee with 2% cash back on all purchases")
+- NEVER repeat the same reason structure or use generic phrases like "matches your criteria" or "Generous welcome bonus with competitive rewards" for ANY card
+- NEVER mention "None welcome bonus" or "No welcome bonus" - if a card doesn't have a welcome bonus, simply don't mention it at all
+- If a card's intro_offer, welcome_bonus, or sign_up_bonus field is empty, null, "None", "N/A", or similar, DO NOT mention welcome bonuses in that card's description
+- Only mention welcome bonuses if they actually exist and have specific details (e.g., "$200 bonus", "50,000 points", etc.)
+- Reference SPECIFIC rewards rates, features, welcome bonus amounts, or benefits from the candidate card data for EACH card
+- Look at the ACTUAL card data provided - use the specific rewards_rate, intro_offer, annual_fee, perks, and other fields to create unique descriptions
+- If multiple cards have welcome bonuses, mention the SPECIFIC bonus amount (e.g., "50,000 point welcome bonus" not "Generous welcome bonus")
+- If multiple cards have rewards, use the SPECIFIC rate (e.g., "3x points on travel" not "competitive rewards")
+- Make each description feel like it was written specifically for that ONE card, not a template
+- Vary your language - use different verbs, adjectives, and sentence structures for each card (e.g., "Earns", "Offers", "Provides", "Features", "Includes", "Delivers")
+- Focus on DIFFERENT features for each card - if Card 1 mentions rewards rate, Card 2 should mention a different feature like perks, fees, or target audience
+
+CRITICAL: When multiple cards share a common feature (like "no annual fee"), DO NOT repeat that shared feature in every description or connecting sentence. Instead:
+- Card 1: Focus on its MOST DISTINCTIVE feature in the description (e.g., "Up to 15% cash back at partner merchants"), then add a unique connecting sentence (e.g., "This card stands out for its exceptional cash back rate at select merchants, making it ideal if you shop at their partner stores regularly.")
+- Card 2: Focus on a DIFFERENT distinctive feature (e.g., "Helps build credit with responsible use reporting"), then add a different connecting sentence (e.g., "This card is designed specifically for building or rebuilding credit, reporting your payment history to all three major credit bureaus.")
+- Card 3: Focus on yet ANOTHER unique aspect (e.g., "Cash back rewards with transparent credit building features"), then add yet another different connecting sentence (e.g., "This card offers a unique approach to credit building with cash back rewards and clear, upfront terms that help you understand your progress.")
+- The shared feature (like "no annual fee") should be mentioned at most ONCE in the preface, NOT in each card description or connecting sentence
+- Each description AND connecting sentence must highlight what makes THAT SPECIFIC CARD unique, not what it shares with others
+- Vary the structure, focus, and wording of both the description and connecting sentence for each card
 
 CRITICAL: You MUST select exactly 3 cards from the candidates. If there are fewer than 3 candidate cards, select all available cards. If there are more than 3, select the best 3. The "cards" array in your JSON response MUST contain exactly 3 cards (no exceptions).
 
@@ -1229,27 +1759,121 @@ Return JSON with the formatted markdown summary.`;
     const completion = await openai.chat.completions.create({
       model: CHAT_MODEL,
       messages: messages,
-      temperature: 0.3, // Slightly higher for more natural conversational tone
-      max_tokens: 800, // Increased to accommodate longer markdown-formatted responses with structure
+      temperature: 0.5, // Higher temperature for more varied, conversational responses
+      max_tokens: 1200, // Increased to accommodate longer markdown-formatted responses with connecting sentences
       response_format: { type: 'json_object' },
     });
     
-    const rawAnswer = completion.choices[0]?.message?.content || '';
-    console.log('LLM response received, length:', rawAnswer.length);
-    console.log('LLM full response:', rawAnswer);
-    
-    // Step 5: Parse LLM response
-    try {
-      const parsed = JSON.parse(rawAnswer);
-      const recommendations: Recommendation[] = parsed.cards || [];
-      let summary = parsed.summary || '';
+      const rawAnswer = completion.choices[0]?.message?.content || '';
+      console.log('LLM response received, length:', rawAnswer.length);
+      console.log('LLM full response:', rawAnswer);
+      
+      // Step 5: Parse LLM response
+      try {
+        const parsed = JSON.parse(rawAnswer);
+        const recommendations: Recommendation[] = parsed.cards || [];
+        let summary = parsed.summary || '';
+        
+        // Validate format: Check if summary has markdown links and connecting sentences
+        const hasMarkdownLinks = summary.includes('**[') && summary.includes('](http');
+        const lines = summary.split('\n').filter((line: string) => line.trim().startsWith('-'));
+        const hasConnectingSentences = lines.length > 0 && lines.every((line: string) => {
+          // Check if line has a period after the description (indicating a connecting sentence)
+          const parts = line.split(' - ');
+          if (parts.length < 2) return false;
+          const afterDash = parts[1];
+          // Should have at least one period after the description
+          const periods = afterDash.split('.').length;
+          return periods >= 2; // At least description and connecting sentence
+        });
+        
+        if (!hasMarkdownLinks || !hasConnectingSentences) {
+          console.warn('WARNING: Summary format validation failed. hasMarkdownLinks:', hasMarkdownLinks, 'hasConnectingSentences:', hasConnectingSentences);
+          console.warn('Summary:', summary);
+          
+          // Try to fix the format: Convert plain text card names to markdown format and add connecting sentences
+          if (recommendations.length > 0 && (!hasMarkdownLinks || !hasConnectingSentences)) {
+            console.log('Attempting to fix summary format by converting plain text to markdown and adding connecting sentences...');
+            
+            // Extract the preface (everything before the first card)
+            const lines = summary.split('\n');
+            const prefaceLines: string[] = [];
+            const cardLines: string[] = [];
+            let foundCards = false;
+            
+            for (const line of lines) {
+              const trimmed = line.trim();
+              // Check if this line contains a card name
+              const containsCard = recommendations.some(rec => 
+                trimmed.includes(rec.credit_card_name)
+              );
+              
+              if (containsCard && !foundCards) {
+                foundCards = true;
+              }
+              
+              if (foundCards && containsCard) {
+                cardLines.push(trimmed);
+              } else if (!foundCards) {
+                prefaceLines.push(line);
+              }
+            }
+            
+            // Rebuild summary with proper format
+            const preface = prefaceLines.join('\n').trim();
+            const formattedCards = recommendations.map((rec, index) => {
+              // Find the original line for this card
+              const originalLine = cardLines.find(line => line.includes(rec.credit_card_name)) || '';
+              
+              // Extract description from original line (everything after card name and dash/hyphen)
+              let description = originalLine
+                .replace(rec.credit_card_name, '')
+                .replace(/^[-\s]*/, '')
+                .replace(/^-\s*/, '')
+                .trim();
+              
+              // Remove "No annual fee" if it's the only description
+              if (description.toLowerCase() === 'no annual fee' || description.toLowerCase().includes('no annual fee') && description.length < 20) {
+                description = rec.reason || `Credit card with valuable benefits`;
+              }
+              
+              // If description is missing or too short, use reason
+              if (!description || description.length < 5) {
+                description = rec.reason || `Credit card with valuable benefits`;
+              }
+              
+              // Create unique connecting sentences based on the card and user query
+              const isNoFeeQuery = userQuery.toLowerCase().includes('no annual fee') || userQuery.toLowerCase().includes('no fee');
+              const connectingSentences = [
+                isNoFeeQuery 
+                  ? `This card stands out for its exceptional value without any annual fee, making it ideal for budget-conscious cardholders.`
+                  : `This card is perfect if you want to maximize your rewards while enjoying valuable benefits.`,
+                isNoFeeQuery
+                  ? `If you're looking to avoid annual fees while still earning rewards, this card delivers strong value.`
+                  : `This option is ideal for cardholders who prioritize ${rec.reason?.toLowerCase() || 'flexible rewards and benefits'}.`,
+                isNoFeeQuery
+                  ? `This card offers a unique combination of benefits without the burden of an annual fee.`
+                  : `This card stands out for ${rec.reason?.toLowerCase() || 'its unique combination of features'} that align with your spending habits.`,
+              ];
+              const connectingSentence = connectingSentences[index % connectingSentences.length];
+              
+              // Remove any trailing period from description to avoid double periods
+              const cleanDescription = description.trim().replace(/\.+$/, '');
+              return `- **[${rec.credit_card_name}](${rec.apply_url})** - ${cleanDescription}. ${connectingSentence}`;
+            }).join('\n');
+            
+            summary = `${preface}\n\n${formattedCards}`;
+            console.log('Fixed summary:', summary);
+          }
+        }
       
       // Clean duplicate card names from summary immediately after parsing
       // This catches patterns like "CardName****CardName - description"
       
-      // FIRST: Simple replacement - replace any sequence of 2+ asterisks with a space
+      // FIRST: Only replace sequences of 4+ asterisks (not 2-3, which are used in markdown)
       // This handles patterns like "CardName****CardName" -> "CardName CardName"
-      let cleanedSummary = summary.replace(/\*{2,}/g, ' ');
+      // But preserves markdown links like **[Card Name](url)**
+      let cleanedSummary = summary.replace(/\*{4,}/g, ' ');
       
       // Then remove duplicate card names that result from the replacement above
       // Remove patterns like "CardName CardName" -> "CardName"
@@ -1376,8 +2000,9 @@ Return JSON with the formatted markdown summary.`;
         const afterText = p2.trim();
         return afterText ? `${text} ${afterText}` : text;
       });
-      // Also catch any standalone '****' sequences and replace with space
-      summary = summary.replace(/\*{2,}/g, ' ');
+      // Also catch any standalone sequences of 4+ asterisks and replace with space
+      // (Preserve 2-3 asterisks which are used in markdown formatting)
+      summary = summary.replace(/\*{4,}/g, ' ');
       
       console.log('Parsed recommendations count:', recommendations.length);
       console.log('Summary:', summary);
@@ -1393,6 +2018,9 @@ Return JSON with the formatted markdown summary.`;
       const normalizeCardNameLocal = (name: string) => 
         name.toLowerCase().replace(/[®™©]/g, '').trim();
       
+      // Helper function to check if a card has no annual fee
+      const hasNoAnnualFee = hasNoAnnualFeeStrict;
+      
       const validRecommendations = recommendations.filter(
         (rec: any) => {
           if (!rec.credit_card_name || !rec.apply_url || !rec.reason) {
@@ -1402,16 +2030,28 @@ Return JSON with the formatted markdown summary.`;
           
           // Check if card name matches any similar card (fuzzy match)
           const recNameNormalized = normalizeCardNameLocal(rec.credit_card_name);
-          const matches = prioritizedSimilarCards.some(
+          const matchingCard = prioritizedSimilarCards.find(
             card => normalizeCardNameLocal(card.card.credit_card_name) === recNameNormalized
           );
           
-          if (!matches) {
+          if (!matchingCard) {
             console.log('Card name not found in similar cards:', rec.credit_card_name);
             console.log('Available cards:', prioritizedSimilarCards.map(c => c.card.credit_card_name));
+            return false;
           }
           
-          return matches;
+          // CRITICAL: If user asked for "no annual fee", filter out cards with fees
+          // This is a final safety net in case the LLM selected cards with fees
+          if (isNoFeeQuery) {
+            const cardHasNoFee = hasNoAnnualFee(matchingCard.card);
+            if (!cardHasNoFee) {
+              const annualFee = String(matchingCard.card.annual_fee || matchingCard.card.fee || '').trim();
+              console.log(`[POST-FILTER] Filtered out card with annual fee: ${rec.credit_card_name} (annual_fee: "${annualFee}")`);
+              return false;
+            }
+          }
+          
+          return true;
         }
       );
       
@@ -1466,10 +2106,31 @@ Return JSON with the formatted markdown summary.`;
             cardHighlights = highlights.join('\n');
           }
           
+          // Check if the reason is generic and replace it if needed
+          let reason = rec.reason || '';
+          const genericPhrases = [
+            'matches your criteria',
+            'matches your needs',
+            'matches your criteria based on',
+            'is a good fit',
+            'addresses your question',
+            'meets your requirements'
+          ];
+          const isGeneric = genericPhrases.some(phrase => 
+            reason.toLowerCase().includes(phrase.toLowerCase())
+          );
+          
+          if (!reason || isGeneric) {
+            reason = generatePersonalizedReason(card, userQuery);
+            if (isGeneric) {
+              console.log(`[REASON REPLACEMENT] Replaced generic reason for ${rec.credit_card_name}: "${rec.reason}" -> "${reason}"`);
+            }
+          }
+          
           const enriched = {
             credit_card_name: rec.credit_card_name,
             apply_url: rec.apply_url || String(card.url_application || ''),
-            reason: rec.reason || '',
+            reason: reason,
             // Pull from Google Sheet first, fallback to LLM response if not in sheet
             card_summary: String(card.card_summary || rec.card_summary || '').trim(),
             card_highlights: cardHighlights,
@@ -1524,6 +2185,67 @@ Return JSON with the formatted markdown summary.`;
         console.log(`[AFTER FILTER ${idx}] ${rec.credit_card_name}: hasHighlights=${!!rec.card_highlights && rec.card_highlights.length > 0}`);
       });
       
+      // Detect and fix duplicate reasons - ensure each card has a unique reason
+      const reasonCounts = new Map<string, number>();
+      filteredRecommendations.forEach(rec => {
+        const reason = rec.reason || '';
+        reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1);
+      });
+      
+      // If any reason appears more than once, regenerate for duplicates
+      filteredRecommendations.forEach((rec, index) => {
+        const reason = rec.reason || '';
+        if (reasonCounts.get(reason)! > 1 && reason.length > 0) {
+          // Find the matching card data
+          const matchingCard = prioritizedSimilarCards.find(
+            card => normalizeCardNameLocal(card.card.credit_card_name) === normalizeCardNameLocal(rec.credit_card_name)
+          );
+          if (matchingCard) {
+            // Generate a new personalized reason
+            const newReason = generatePersonalizedReason(matchingCard.card, userQuery);
+            // Make sure it's different from existing reasons
+            const existingReasons = filteredRecommendations.map(r => r.reason).filter(r => r && r !== reason);
+            if (!existingReasons.includes(newReason)) {
+              console.log(`[DUPLICATE REASON FIX] Replaced duplicate reason for ${rec.credit_card_name}: "${reason}" -> "${newReason}"`);
+              rec.reason = newReason;
+              // Update the count
+              reasonCounts.set(reason, reasonCounts.get(reason)! - 1);
+              reasonCounts.set(newReason, (reasonCounts.get(newReason) || 0) + 1);
+            } else {
+              // If still duplicate, try to make it more specific by adding card-specific details
+              const card = matchingCard.card;
+              const rewardsRate = String(card.rewards_rate || card.rewards || '').trim();
+              const annualFee = String(card.annual_fee || '').trim();
+              const welcomeBonus = String(card.intro_offer || card.welcome_bonus || '').trim();
+              
+              let specificReason = '';
+              const welcomeBonusLower = welcomeBonus.toLowerCase().trim();
+              const isNoneOrEmpty = !welcomeBonus || welcomeBonusLower === 'none' || welcomeBonusLower === 'n/a' || welcomeBonusLower === 'na' || welcomeBonusLower === '';
+              if (rewardsRate && rewardsRate.length < 40) {
+                specificReason = `Earns ${rewardsRate} on purchases`;
+              } else if (!isNoneOrEmpty && welcomeBonus && welcomeBonus.length < 40) {
+                specificReason = `${welcomeBonus.substring(0, 35)} welcome bonus`;
+              } else if (annualFee && annualFee !== '0' && annualFee !== '$0') {
+                specificReason = `${annualFee} annual fee with premium benefits`;
+              } else if (annualFee === '0' || annualFee === '$0') {
+                specificReason = 'No annual fee with rewards';
+              } else {
+                // Use card name to differentiate
+                const cardNameWords = String(card.credit_card_name || '').split(' ').slice(0, 2).join(' ');
+                specificReason = `${cardNameWords} rewards program`;
+              }
+              
+              if (!existingReasons.includes(specificReason) && specificReason.length > 0) {
+                console.log(`[DUPLICATE REASON FIX] Replaced with card-specific reason for ${rec.credit_card_name}: "${reason}" -> "${specificReason}"`);
+                rec.reason = specificReason;
+                reasonCounts.set(reason, reasonCounts.get(reason)! - 1);
+                reasonCounts.set(specificReason, (reasonCounts.get(specificReason) || 0) + 1);
+              }
+            }
+          }
+        }
+      });
+      
       // Ensure at least one top_card card is included if available
       // This is CRITICAL - we must force top_card cards to appear
       if (topCards.length > 0) {
@@ -1542,10 +2264,31 @@ Return JSON with the formatted markdown summary.`;
           console.log(`Available topCards: ${topCards.map(c => c.card.credit_card_name).join(', ')}`);
           console.log(`Current recommendations: ${filteredRecommendations.map(r => r.credit_card_name).join(', ')}`);
           
+          // Helper function to check if a card has no annual fee (reuse same logic)
+          const hasNoAnnualFee = (card: any): boolean => {
+            const annualFee = String(card.annual_fee || card.fee || '').trim().toLowerCase();
+            if (!annualFee || annualFee === '') return true;
+            const noFeeIndicators = ['0', '$0', '0.00', '$0.00', 'no fee', 'no annual fee', 'none', 'n/a', 'na', 'free', 'zero', '$0 annual fee', '0 annual fee'];
+            if (noFeeIndicators.includes(annualFee)) return true;
+            if (annualFee.includes('no fee') || annualFee.includes('no annual fee')) return true;
+            const numericFee = parseFloat(annualFee.replace(/[^0-9.]/g, ''));
+            if (!isNaN(numericFee) && numericFee === 0) return true;
+            if (annualFee.includes('$')) {
+              const dollarAmount = parseFloat(annualFee.replace(/[^0-9.]/g, ''));
+              if (!isNaN(dollarAmount) && dollarAmount === 0) return true;
+            }
+            return false;
+          };
+          
           const usedCardNames = new Set(filteredRecommendations.map(r => normalizeCardNameLocal(r.credit_card_name)));
-          const availableTopCard = topCards.find(card => 
-            !usedCardNames.has(normalizeCardNameLocal(card.card.credit_card_name))
-          );
+          const availableTopCard = topCards.find(card => {
+            const nameMatch = !usedCardNames.has(normalizeCardNameLocal(card.card.credit_card_name));
+            // If user asked for no annual fee, also check that the card has no fee
+            if (isNoFeeQuery) {
+              return nameMatch && hasNoAnnualFee(card.card);
+            }
+            return nameMatch;
+          });
           
           if (availableTopCard) {
             const card = availableTopCard.card;
@@ -1571,7 +2314,7 @@ Return JSON with the formatted markdown summary.`;
             const topCardRec: Recommendation = {
               credit_card_name: card.credit_card_name,
               apply_url: String(card.url_application || ''),
-              reason: `This top-rated card matches your criteria based on ${card.rewards || 'its features'}.`,
+              reason: generatePersonalizedReason(card, userQuery),
               card_summary: String(card.card_summary || '').trim(),
               card_highlights: topCardHighlights,
               intro_offer: String(card.intro_offer || card.welcome_bonus || card.sign_up_bonus || card.intro_bonus || ''),
@@ -1582,6 +2325,12 @@ Return JSON with the formatted markdown summary.`;
               perks: String(card.perks || card.benefits || card.card_perks || ''),
             };
             
+            // CRITICAL: Double-check annual fee before adding (safety net)
+            if (isNoFeeQuery && !hasNoAnnualFee(card)) {
+              const annualFee = String(card.annual_fee || card.fee || '').trim();
+              console.error(`[TOP_CARD BLOCK] Blocked top_card card with annual fee: ${card.credit_card_name} (annual_fee: "${annualFee}")`);
+              console.warn(`⚠ Skipping top_card card because it has an annual fee and user asked for no annual fee cards`);
+            } else {
             if (filteredRecommendations.length < 3) {
               // Add it if we have room
               filteredRecommendations.push(topCardRec);
@@ -1607,6 +2356,7 @@ Return JSON with the formatted markdown summary.`;
               if (!replaced) {
                 filteredRecommendations[filteredRecommendations.length - 1] = topCardRec;
                 console.log(`✓ Replaced last recommendation with top_card card: ${card.credit_card_name}`);
+                }
               }
             }
           } else {
@@ -1625,13 +2375,35 @@ Return JSON with the formatted markdown summary.`;
         const normalizeCardNameLocal = (name: string) => 
           name.toLowerCase().replace(/[®™©]/g, '').trim();
         
+        // Helper function to check if a card has no annual fee (reuse same logic)
+        const hasNoAnnualFee = (card: any): boolean => {
+          const annualFee = String(card.annual_fee || card.fee || '').trim().toLowerCase();
+          if (!annualFee || annualFee === '') return true;
+          const noFeeIndicators = ['0', '$0', '0.00', '$0.00', 'no fee', 'no annual fee', 'none', 'n/a', 'na', 'free', 'zero', '$0 annual fee', '0 annual fee'];
+          if (noFeeIndicators.includes(annualFee)) return true;
+          if (annualFee.includes('no fee') || annualFee.includes('no annual fee')) return true;
+          const numericFee = parseFloat(annualFee.replace(/[^0-9.]/g, ''));
+          if (!isNaN(numericFee) && numericFee === 0) return true;
+          if (annualFee.includes('$')) {
+            const dollarAmount = parseFloat(annualFee.replace(/[^0-9.]/g, ''));
+            if (!isNaN(dollarAmount) && dollarAmount === 0) return true;
+          }
+          return false;
+        };
+        
         // Track co_branded values if not a cobranded query
         const usedCobranded = new Set<string>();
         const fallbackCards: CardEmbedding[] = [];
         
-        // Prioritize top_card cards in fallback
+        // Prioritize top_card cards in fallback, but respect "no annual fee" requirement
         for (const cardData of prioritizedSimilarCards) {
           if (fallbackCards.length >= 3) break;
+          
+          // If user asked for no annual fee, filter out cards with fees
+          if (isNoFeeQuery && !hasNoAnnualFee(cardData.card)) {
+            console.log(`Skipping fallback card with annual fee: ${cardData.card.credit_card_name}`);
+            continue;
+          }
           
           if (!isCobrandedQuery) {
             const cobranded = String(cardData.card.co_branded || 'NA').trim().toLowerCase();
@@ -1668,7 +2440,7 @@ Return JSON with the formatted markdown summary.`;
           return {
             credit_card_name: card.credit_card_name,
             apply_url: String(card.url_application || card.url || ''),
-            reason: `This card matches your criteria based on ${card.rewards || 'its features'}.`,
+            reason: generatePersonalizedReason(card, userQuery),
             card_summary: String(card.card_summary || '').trim(),
             card_highlights: cardHighlights,
             intro_offer: String(card.intro_offer || card.welcome_bonus || card.sign_up_bonus || card.intro_bonus || ''),
@@ -1694,18 +2466,45 @@ Return JSON with the formatted markdown summary.`;
         });
         
         if (!hasTopCard) {
+          // Helper function to check if a card has no annual fee (reuse same logic)
+          const hasNoAnnualFee = (card: any): boolean => {
+            const annualFee = String(card.annual_fee || card.fee || '').trim().toLowerCase();
+            if (!annualFee || annualFee === '') return true;
+            const noFeeIndicators = ['0', '$0', '0.00', '$0.00', 'no fee', 'no annual fee', 'none', 'n/a', 'na', 'free', 'zero', '$0 annual fee', '0 annual fee'];
+            if (noFeeIndicators.includes(annualFee)) return true;
+            if (annualFee.includes('no fee') || annualFee.includes('no annual fee')) return true;
+            const numericFee = parseFloat(annualFee.replace(/[^0-9.]/g, ''));
+            if (!isNaN(numericFee) && numericFee === 0) return true;
+            if (annualFee.includes('$')) {
+              const dollarAmount = parseFloat(annualFee.replace(/[^0-9.]/g, ''));
+              if (!isNaN(dollarAmount) && dollarAmount === 0) return true;
+            }
+            return false;
+          };
+          
           // Find an available top_card card
           const usedCardNames = new Set(finalRecommendations.map(r => normalizeCardNameLocal(r.credit_card_name)));
-          const availableTopCard = topCards.find(card => 
-            !usedCardNames.has(normalizeCardNameLocal(card.card.credit_card_name))
-          );
+          const availableTopCard = topCards.find(card => {
+            const nameMatch = !usedCardNames.has(normalizeCardNameLocal(card.card.credit_card_name));
+            // If user asked for no annual fee, also check that the card has no fee
+            if (isNoFeeQuery) {
+              return nameMatch && hasNoAnnualFee(card.card);
+            }
+            return nameMatch;
+          });
           
           if (availableTopCard) {
             const card = availableTopCard.card;
+            
+            // CRITICAL: Double-check annual fee before adding (safety net)
+            if (isNoFeeQuery && !hasNoAnnualFee(card)) {
+              const annualFee = String(card.annual_fee || card.fee || '').trim();
+              console.error(`[TOP_CARD BLOCK] Blocked top_card card with annual fee: ${card.credit_card_name} (annual_fee: "${annualFee}")`);
+            } else {
             const topCardRec: Recommendation = {
               credit_card_name: card.credit_card_name,
               apply_url: String(card.url_application || ''),
-              reason: `This top-rated card matches your criteria based on ${card.rewards || 'its features'}.`,
+                reason: generatePersonalizedReason(card, userQuery),
               card_summary: String(card.card_summary || '').trim(),
               card_highlights: String(card.card_highlights || '').trim(),
               intro_offer: String(card.intro_offer || card.welcome_bonus || card.sign_up_bonus || card.intro_bonus || ''),
@@ -1723,6 +2522,7 @@ Return JSON with the formatted markdown summary.`;
             } else {
               finalRecommendations.push(topCardRec);
               console.log(`Added top_card card to recommendations: ${card.credit_card_name}`);
+              }
             }
           }
         }
@@ -1765,13 +2565,51 @@ Return JSON with the formatted markdown summary.`;
           
           let cardsToConsider = prioritizedSimilarCards;
           if (!hasTopCardInFinal && topCards.length > 0) {
-            // Prioritize top_card cards when padding
-            cardsToConsider = [...topCards.filter(card => 
-              !finalRecommendations.some(rec => 
+            // Helper function to check if a card has no annual fee
+            const hasNoAnnualFee = (card: any): boolean => {
+              const annualFee = String(card.annual_fee || card.fee || '').trim().toLowerCase();
+              if (!annualFee || annualFee === '') return true;
+              const noFeeIndicators = ['0', '$0', '0.00', '$0.00', 'no fee', 'no annual fee', 'none', 'n/a', 'na', 'free', 'zero', '$0 annual fee', '0 annual fee'];
+              if (noFeeIndicators.includes(annualFee)) return true;
+              if (annualFee.includes('no fee') || annualFee.includes('no annual fee')) return true;
+              const numericFee = parseFloat(annualFee.replace(/[^0-9.]/g, ''));
+              if (!isNaN(numericFee) && numericFee === 0) return true;
+              if (annualFee.includes('$')) {
+                const dollarAmount = parseFloat(annualFee.replace(/[^0-9.]/g, ''));
+                if (!isNaN(dollarAmount) && dollarAmount === 0) return true;
+              }
+              return false;
+            };
+            
+            // Prioritize top_card cards when padding, but respect "no annual fee" requirement
+            const eligibleTopCards = topCards.filter(card => {
+              const nameMatch = !finalRecommendations.some(rec => 
                 normalizeCardNameLocal(rec.credit_card_name) === normalizeCardNameLocal(card.card.credit_card_name)
-              )
-            ), ...nonTopCards];
+              );
+              // If user asked for no annual fee, also check that the card has no fee
+              if (isNoFeeQuery) {
+                return nameMatch && hasNoAnnualFee(card.card);
+              }
+              return nameMatch;
+            });
+            cardsToConsider = [...eligibleTopCards, ...nonTopCards];
           }
+          
+          // Helper function to check if a card has no annual fee
+          const hasNoAnnualFee = (card: any): boolean => {
+            const annualFee = String(card.annual_fee || card.fee || '').trim().toLowerCase();
+            if (!annualFee || annualFee === '') return true;
+            const noFeeIndicators = ['0', '$0', '0.00', '$0.00', 'no fee', 'no annual fee', 'none', 'n/a', 'na', 'free', 'zero', '$0 annual fee', '0 annual fee'];
+            if (noFeeIndicators.includes(annualFee)) return true;
+            if (annualFee.includes('no fee') || annualFee.includes('no annual fee')) return true;
+            const numericFee = parseFloat(annualFee.replace(/[^0-9.]/g, ''));
+            if (!isNaN(numericFee) && numericFee === 0) return true;
+            if (annualFee.includes('$')) {
+              const dollarAmount = parseFloat(annualFee.replace(/[^0-9.]/g, ''));
+              if (!isNaN(dollarAmount) && dollarAmount === 0) return true;
+            }
+            return false;
+          };
           
           // First try: Get cards with unique co_branded values (if not cobranded query)
           let additionalCards = cardsToConsider
@@ -1780,6 +2618,14 @@ Return JSON with the formatted markdown summary.`;
               if (usedCardNames.has(cardNameNormalized)) {
                 return false;
               }
+              
+              // CRITICAL: If user asked for "no annual fee", filter out cards with fees
+              if (isNoFeeQuery && !hasNoAnnualFee(card.card)) {
+                const annualFee = String(card.card.annual_fee || card.card.fee || '').trim();
+                console.log(`[PADDING FILTER] Filtered out card with annual fee: ${card.card.credit_card_name} (annual_fee: "${annualFee}")`);
+                return false;
+              }
+              
               // If not a cobranded query, also filter by co_branded
               if (!isCobrandedQuery) {
                 const cobranded = String(card.card.co_branded || 'NA').trim().toLowerCase();
@@ -1797,7 +2643,18 @@ Return JSON with the formatted markdown summary.`;
             additionalCards = cardsToConsider
               .filter(card => {
                 const cardNameNormalized = normalizeCardNameLocal(card.card.credit_card_name);
-                return !usedCardNames.has(cardNameNormalized);
+                if (usedCardNames.has(cardNameNormalized)) {
+                  return false;
+                }
+                
+                // CRITICAL: Still respect "no annual fee" requirement even when relaxing co_branded constraint
+                if (isNoFeeQuery && !hasNoAnnualFee(card.card)) {
+                  const annualFee = String(card.card.annual_fee || card.card.fee || '').trim();
+                  console.log(`[PADDING FILTER RELAXED] Filtered out card with annual fee: ${card.card.credit_card_name} (annual_fee: "${annualFee}")`);
+                  return false;
+                }
+                
+                return true;
               })
               .slice(0, 3 - finalRecommendations.length);
           }
@@ -1809,7 +2666,18 @@ Return JSON with the formatted markdown summary.`;
             const moreCards = cardsToConsider
               .filter(card => {
                 const cardNameNormalized = normalizeCardNameLocal(card.card.credit_card_name);
-                return !usedCardNames.has(cardNameNormalized);
+                if (usedCardNames.has(cardNameNormalized)) {
+                  return false;
+                }
+                
+                // CRITICAL: Still respect "no annual fee" requirement even in last resort
+                if (isNoFeeQuery && !hasNoAnnualFee(card.card)) {
+                  const annualFee = String(card.card.annual_fee || card.card.fee || '').trim();
+                  console.log(`[LAST RESORT FILTER] Filtered out card with annual fee: ${card.card.credit_card_name} (annual_fee: "${annualFee}")`);
+                  return false;
+                }
+                
+                return true;
               })
               .slice(0, needed);
             additionalCards = [...additionalCards, ...moreCards].slice(0, needed);
@@ -1843,7 +2711,7 @@ Return JSON with the formatted markdown summary.`;
             finalRecommendations.push({
               credit_card_name: card.credit_card_name,
               apply_url: String(card.url_application || card.url || ''),
-              reason: `This card matches your criteria based on ${card.rewards || 'its features'}.`,
+              reason: generatePersonalizedReason(card, userQuery),
               card_summary: String(card.card_summary || '').trim(),
               card_highlights: cardHighlights,
               intro_offer: String(card.intro_offer || card.welcome_bonus || card.sign_up_bonus || card.intro_bonus || ''),
@@ -1863,8 +2731,8 @@ Return JSON with the formatted markdown summary.`;
       
       // Clean summary again before checking if we need to rebuild
       // This ensures any duplicates are removed before we check for missing cards
-      // FIRST: Replace any sequence of 2+ asterisks with a space
-      summary = summary.replace(/\*{2,}/g, ' ');
+      // FIRST: Only replace sequences of 4+ asterisks (preserve markdown which uses 2 asterisks)
+      summary = summary.replace(/\*{4,}/g, ' ');
       
       // Then remove duplicate card names
       if (finalRecommendations.length > 0) {
@@ -1928,10 +2796,27 @@ Return JSON with the formatted markdown summary.`;
           }
           
           // Build cards list with proper markdown formatting - each on separate line
-          // Format: - **[Card Name](url)** - description (5-15 words)
-          const cardsText = finalRecommendations.map(rec => 
-            `- **[${rec.credit_card_name}](${rec.apply_url})** - ${rec.reason}`
-          ).join('\n\n');
+          // Format: - **[Card Name](url)** - description. [Connecting sentence]
+          const cardsText = finalRecommendations.map((rec, index) => {
+            const description = rec.reason || 'Credit card with valuable benefits';
+            // Create unique connecting sentences
+            const isNoFeeQuery = userQuery.toLowerCase().includes('no annual fee') || userQuery.toLowerCase().includes('no fee');
+            const connectingSentences = [
+              isNoFeeQuery 
+                ? `This card stands out for its exceptional value without any annual fee, making it ideal for budget-conscious cardholders.`
+                : `This card is perfect if you want to maximize your rewards while enjoying valuable benefits.`,
+              isNoFeeQuery
+                ? `If you're looking to avoid annual fees while still earning rewards, this card delivers strong value.`
+                : `This option is ideal for cardholders who prioritize ${rec.reason?.toLowerCase() || 'flexible rewards and benefits'}.`,
+              isNoFeeQuery
+                ? `This card offers a unique combination of benefits without the burden of an annual fee.`
+                : `This card stands out for ${rec.reason?.toLowerCase() || 'its unique combination of features'} that align with your spending habits.`,
+            ];
+            const connectingSentence = connectingSentences[index % connectingSentences.length];
+            // Remove any trailing period from description to avoid double periods
+            const cleanDescription = description.trim().replace(/\.+$/, '');
+            return `- **[${rec.credit_card_name}](${rec.apply_url})** - ${cleanDescription}. ${connectingSentence}`;
+          }).join('\n\n');
           
           // New format: ONE sentence preface, blank line, then three cards (no closing sentence)
           finalSummary = openingSentence + '\n\n' + cardsText;
@@ -2008,7 +2893,8 @@ Return JSON with the formatted markdown summary.`;
       
       // Final safety net: Replace any remaining asterisks and remove duplicates
       // Replace any sequence of 2+ asterisks with a space first
-      finalSummary = finalSummary.replace(/\*{2,}/g, ' ');
+      // Only replace sequences of 4+ asterisks (preserve markdown which uses 2 asterisks)
+      finalSummary = finalSummary.replace(/\*{4,}/g, ' ');
       
       // Then remove duplicate card names that result from the replacement
       if (finalRecommendations.length > 0) {
@@ -2079,10 +2965,88 @@ Return JSON with the formatted markdown summary.`;
         return line;
       }).join('\n');
       
+      // FINAL VALIDATION: Remove any cards with annual fees if user asked for "no annual fee"
+      // This is the absolute last safety net before returning - use STRICT function
+      if (isNoFeeQuery) {
+        const normalizeCardNameLocal = (name: string) => 
+          name.toLowerCase().replace(/[®™©]/g, '').trim();
+        
+        const beforeFinalCount = finalRecommendations.length;
+        console.log(`[FINAL VALIDATION] Checking ${beforeFinalCount} recommendations for annual fees...`);
+        
+        finalRecommendations = finalRecommendations.filter(rec => {
+          // Find the matching card to check annual fee
+          const matchingCard = prioritizedSimilarCards.find(
+            card => normalizeCardNameLocal(card.card.credit_card_name) === normalizeCardNameLocal(rec.credit_card_name)
+          );
+          
+          if (matchingCard) {
+            const cardHasNoFee = hasNoAnnualFeeStrict(matchingCard.card);
+            if (!cardHasNoFee) {
+              const annualFee = String(matchingCard.card.annual_fee || matchingCard.card.fee || '').trim();
+              console.error(`[FINAL VALIDATION] ❌ REMOVED card with annual fee: ${rec.credit_card_name} (annual_fee: "${annualFee}")`);
+              return false;
+            } else {
+              console.log(`[FINAL VALIDATION] ✓ ${rec.credit_card_name} has no annual fee`);
+            }
+          } else {
+            console.warn(`[FINAL VALIDATION] Could not find matching card for ${rec.credit_card_name} - keeping it but this is unusual`);
+          }
+          return true;
+        });
+        
+        if (beforeFinalCount !== finalRecommendations.length) {
+          console.error(`[FINAL VALIDATION] Filtered ${beforeFinalCount - finalRecommendations.length} cards with annual fees in final validation pass`);
+          console.error(`[FINAL VALIDATION] Remaining cards: ${finalRecommendations.map(r => r.credit_card_name).join(', ')}`);
+        } else {
+          console.log(`[FINAL VALIDATION] All ${beforeFinalCount} recommendations passed fee check`);
+        }
+      }
+      
       // Generate a short title for the recommendations
       const title = await generateRecommendationTitle(userQuery);
       
       console.log('[FINAL] Summary after all cleaning:', finalSummary.substring(0, 500));
+      
+      // FINAL FORMAT VALIDATION AND FIX: Ensure summary has proper markdown format and connecting sentences
+      const finalHasMarkdownLinks = finalSummary.includes('**[') && finalSummary.includes('](http');
+      const finalLines = finalSummary.split('\n').filter((line: string) => line.trim().startsWith('-'));
+      const finalHasConnectingSentences = finalLines.length > 0 && finalLines.every((line: string) => {
+        const parts = line.split(' - ');
+        if (parts.length < 2) return false;
+        const afterDash = parts[1];
+        const periods = afterDash.split('.').length;
+        return periods >= 2; // At least description and connecting sentence
+      });
+      
+      if (!finalHasMarkdownLinks || !finalHasConnectingSentences) {
+        console.warn('[FINAL FORMAT FIX] Summary format is incorrect, rebuilding with proper format...');
+        const prefaceMatch = finalSummary.match(/^([^\n]+(?:\n[^\n-]+)*)/);
+        const preface = prefaceMatch ? prefaceMatch[1].trim() : `Based on your needs, here are three credit cards that could work well for you.`;
+        
+        const formattedCards = finalRecommendations.map((rec, index) => {
+          const description = rec.reason || 'Credit card with valuable benefits';
+          const isNoFeeQuery = userQuery.toLowerCase().includes('no annual fee') || userQuery.toLowerCase().includes('no fee');
+          const connectingSentences = [
+            isNoFeeQuery 
+              ? `This card stands out for its exceptional value without any annual fee, making it ideal for budget-conscious cardholders.`
+              : `This card is perfect if you want to maximize your rewards while enjoying valuable benefits.`,
+            isNoFeeQuery
+              ? `If you're looking to avoid annual fees while still earning rewards, this card delivers strong value.`
+              : `This option is ideal for cardholders who prioritize ${rec.reason?.toLowerCase() || 'flexible rewards and benefits'}.`,
+            isNoFeeQuery
+              ? `This card offers a unique combination of benefits without the burden of an annual fee.`
+              : `This card stands out for ${rec.reason?.toLowerCase() || 'its unique combination of features'} that align with your spending habits.`,
+          ];
+          const connectingSentence = connectingSentences[index % connectingSentences.length];
+          // Remove any trailing period from description to avoid double periods
+          const cleanDescription = description.trim().replace(/\.+$/, '');
+          return `- **[${rec.credit_card_name}](${rec.apply_url})** - ${cleanDescription}. ${connectingSentence}`;
+        }).join('\n\n');
+        
+        finalSummary = `${preface}\n\n${formattedCards}`;
+        console.log('[FINAL FORMAT FIX] Rebuilt summary with proper format');
+      }
       
       // Final validation: Ensure all recommendations have card_highlights
       const validatedRecommendations = finalRecommendations.map((rec: any, idx: number) => {
