@@ -4392,7 +4392,7 @@ export default function Home() {
                       <img
                         src={currentCartoon.imageUrl}
                         alt="Loading cartoon"
-                        className="max-w-full max-h-full object-contain drop-shadow-lg"
+                        className="max-w-full max-h-full object-contain drop-shadow-lg scale-[0.8]"
                         onError={(e) => {
                           const target = e.target as HTMLImageElement;
                           target.style.display = 'none';
